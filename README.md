@@ -1,63 +1,87 @@
-﻿# Claudio AI Radio
+# Claudio AI Radio
 
-涓€涓湰鍦颁紭鍏堢殑 AI 鐢靛彴鎾斁鍣細缃戞槗浜戞瓕鍗曞鍏ャ€丄I DJ 鍙ｆ挱銆佹瓕璇嶃€佸ぉ姘斾笂涓嬫枃銆佽亰澶╂绱㈠拰鎾斁闃熷垪鎺у埗銆?
-## 蹇€熷紑濮?
-鍏堝噯澶囨湰鍦板瘑閽ユ枃浠讹細
+一个本地优先的 AI 电台播放器，借鉴 Claudio FM 的思路制作：
+
+Inspired by Claudio FM: https://mmguo.dev/claudio-fm/
+
+这是一个独立的个人实验项目，不是 Claudio FM 官方项目。
+
+## 功能
+
+- 网易云歌单导入
+- 本地曲库播放
+- AI DJ 口播
+- 歌词显示
+- 天气上下文推荐
+- Chat 检索歌曲、推荐歌曲、控制后续播放队列
+- 支持“上一批候选全部加入列表”
+- 支持歌手别名和部分中文歌名别名检索
+
+## 快速开始
+
+先准备本地密钥文件：
 
 ```powershell
 Copy-Item .\radio-secrets.example.ps1 .\radio-secrets.ps1
 notepad .\radio-secrets.ps1
 ```
 
-濉叆 `NETEASE_COOKIE` 鍜?`DEEPSEEK_API_KEY` 鍚庡惎鍔細
+填入 `NETEASE_COOKIE` 和 `DEEPSEEK_API_KEY` 后启动：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start-radio.ps1
 ```
 
-鎵撳紑锛?
+打开：
+
 ```text
 http://localhost:3000
 ```
 
-## 缃戞槗浜?API
+## 网易云 API
 
-鎺ㄨ崘鎶?NeteaseCloudMusicAPI Enhanced 璺戝湪 `4000` 绔彛锛?
+推荐把 NeteaseCloudMusicAPI Enhanced 跑在 `4000` 端口：
+
 ```cmd
 cd C:\Users\zwy0824\Documents\Codex\api-enhanced
 set PORT=4000
 npm.cmd start
 ```
 
-鏈」鐩粯璁よ鍙栵細
+本项目默认读取：
 
 ```text
 http://localhost:4000
 ```
 
-## 瀵煎叆姝屽崟
+## 导入歌单
 
-杩藉姞瀵煎叆锛屼笉瑕嗙洊褰撳墠鏇插簱锛?
-```powershell
-npm.cmd run import:netease -- 姝屽崟ID --base http://localhost:4000 --with-url --merge
-```
-
-涓€娆″鍏ュ涓瓕鍗曪細
+追加导入，不覆盖当前曲库：
 
 ```powershell
-npm.cmd run import:netease -- 姝屽崟ID1 姝屽崟ID2 姝屽崟ID3 --base http://localhost:4000 --with-url --merge
+npm.cmd run import:netease -- 歌单ID --base http://localhost:4000 --with-url --merge
 ```
 
-鍏堥瑙堜笉鍐欏叆锛?
+一次导入多个歌单：
+
 ```powershell
-npm.cmd run import:netease -- 姝屽崟ID --base http://localhost:4000 --with-url --dry-run
+npm.cmd run import:netease -- 歌单ID1 歌单ID2 歌单ID3 --base http://localhost:4000 --with-url --merge
 ```
 
-鍘婚噸瑙勫垯锛氭瓕鏇叉爣棰?鐗堟湰鍜屾瓕鎵嬪畬鍏ㄤ竴鑷存墠鍚堝苟锛岄伩鍏嶅悓鍚嶄笉鍚屾瓕鎵嬭璇垹銆?
-## 閰嶇疆
+先预览不写入：
 
-`radio-secrets.ps1` 鍙繚瀛樺湪鏈湴锛屼笉瑕佷笂浼?GitHub銆?
-甯哥敤鍙橀噺锛?
+```powershell
+npm.cmd run import:netease -- 歌单ID --base http://localhost:4000 --with-url --dry-run
+```
+
+去重规则：歌曲标题/版本和歌手完全一致才合并，避免同名不同歌手被误删。
+
+## 配置
+
+`radio-secrets.ps1` 只保存在本地，不要上传 GitHub。
+
+常用变量：
+
 ```powershell
 $env:NETEASE_COOKIE = ""
 $env:DEEPSEEK_API_KEY = ""
@@ -66,7 +90,7 @@ $env:NETEASE_API_BASE = "http://localhost:4000"
 $env:NETEASE_AUDIO_LEVEL = "standard"
 ```
 
-鍙€夊彉閲忥細
+可选变量：
 
 ```powershell
 $env:OPENWEATHER_API_KEY = ""
@@ -75,11 +99,19 @@ $env:ANTHROPIC_API_KEY = ""
 $env:CLAUDE_MODEL = "claude-sonnet-4-20250514"
 ```
 
-## 椤圭洰缁撴瀯
+## 项目结构
 
-- `server.js`: 鏈湴 Node 鏈嶅姟锛岃礋璐ｆ挱鏀剧姸鎬併€佺綉鏄撲簯浠ｇ悊銆丄I chat銆佹瓕璇嶃€佸ぉ姘斿拰闃熷垪銆?- `public/`: 鍓嶇 PWA 鎾斁鍣ㄣ€?- `scripts/import-netease-playlist.js`: 缃戞槗浜戞瓕鍗曞鍏ヨ剼鏈€?- `data/playlists.json`: 褰撳墠鏇插簱鏁版嵁銆?- `data/taste.json`: 鐢靛彴鍙ｅ懗閰嶇疆銆?- `radio-secrets.example.ps1`: 鏈湴瀵嗛挜妯℃澘銆?
-## 涓婁紶 GitHub 鍓嶆鏌?
-纭涓嶈鎻愪氦杩欎簺鏂囦欢锛?
+- `server.js`: 本地 Node 服务，负责播放状态、网易云代理、AI chat、歌词、天气和队列。
+- `public/`: 前端 PWA 播放器。
+- `scripts/import-netease-playlist.js`: 网易云歌单导入脚本。
+- `data/playlists.json`: 当前曲库数据。
+- `data/taste.json`: 电台口味配置。
+- `radio-secrets.example.ps1`: 本地密钥模板。
+
+## 上传 GitHub 前检查
+
+确认不要提交这些文件：
+
 ```text
 radio-secrets.ps1
 *.log
@@ -87,8 +119,4 @@ node_modules/
 .env
 ```
 
-鍙互鐢ㄤ笅闈㈠懡浠ょ‘璁ゆ病鏈夋槑鏄惧瘑閽ワ細
-
-
-濡傛灉娌℃湁杈撳嚭锛屽氨姣旇緝瀹夊叏銆?
-
+上传前请确认没有提交真实 cookie、API key、`.env` 或 `radio-secrets.ps1`。
