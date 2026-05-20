@@ -1,0 +1,15 @@
+{
+  "name": "claudio-ai-radio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first PWA AI radio inspired by Claudio: playlist memory, AI DJ host, weather/routine context, and a phone-friendly player.",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "import:netease": "node scripts/import-netease-playlist.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
