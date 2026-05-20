@@ -81,7 +81,7 @@ npm.cmd run import:netease -- 歌单ID --base http://localhost:4000 --with-url -
 
 ## 配置
 
-`radio-secrets.ps1` 只保存在本地，不要上传 GitHub。
+`radio-secrets.ps1` 只保存在本地。
 
 常用变量：
 
