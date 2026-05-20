@@ -14,8 +14,11 @@ Inspired by Claudio FM: https://mmguo.dev/claudio-fm/
 - 歌词显示
 - 天气上下文推荐
 - Chat 检索歌曲、推荐歌曲、控制后续播放队列
-- 支持“上一批候选全部加入列表”
-- 支持歌手别名和部分中文歌名别名检索
+- Chat 支持普通对话、当前歌曲问答、曲库检索和推荐卡片
+- Chat 支持“我要听某歌手/某首歌”并自动加入后续播放队列
+- Chat 支持“上一批候选全部加入列表”
+- Chat 支持歌手别名、部分中文歌名别名和模糊查询
+- Chat 在不确定缩写或别称时会先追问，避免盲目排歌
 
 ## 快速开始
 
@@ -107,16 +110,3 @@ $env:CLAUDE_MODEL = "claude-sonnet-4-20250514"
 - `data/playlists.json`: 当前曲库数据。
 - `data/taste.json`: 电台口味配置。
 - `radio-secrets.example.ps1`: 本地密钥模板。
-
-## 上传 GitHub 前检查
-
-确认不要提交这些文件：
-
-```text
-radio-secrets.ps1
-*.log
-node_modules/
-.env
-```
-
-上传前请确认没有提交真实 cookie、API key、`.env` 或 `radio-secrets.ps1`。
