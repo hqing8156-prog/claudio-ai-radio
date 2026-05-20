@@ -43,6 +43,10 @@ http://localhost:3000
 
 ## 网易云 API
 
+本项目依赖 NeteaseCloudMusicAPI Enhanced 作为本地网易云接口服务：
+
+https://github.com/neteasecloudmusicapienhanced/api-enhanced
+
 推荐把 NeteaseCloudMusicAPI Enhanced 跑在 `4000` 端口：
 
 ```cmd
