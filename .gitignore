@@ -1,0 +1,11 @@
+radio-secrets.ps1
+.env
+.env.*
+data/memory.json
+data/playback-state.json
+*.log
+node_modules/
+.npm-cache/
+.DS_Store
+Thumbs.db
+ClaudioRadioLauncher.exe

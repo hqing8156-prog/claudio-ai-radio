@@ -1,0 +1,15 @@
+{
+  "name": "Claudio AI Radio",
+  "short_name": "Claudio",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080908",
+  "theme_color": "#101614",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
