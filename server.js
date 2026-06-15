@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-fix-local-mojibake-v306";
+const APP_VERSION = "2026-06-16-chat-bare-playback-v308";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
@@ -1848,6 +1848,50 @@ function wantsMusicContinuation(prompt) {
     || /^(继续|接着|直接).{0,8}(推荐|播放|切换|来|安排)/i.test(normalized);
 }
 
+function barePlaybackCommandTarget(prompt) {
+  return normalizeText(prompt)
+    .replace(/^(?:(?:那就|那么|那|就|你|请|帮我|给我|直接|现在|马上|立刻)\s*)+/i, "")
+    .replace(/(吧|呗|呀|啊|嘛|一下|一下吧|就行|好了|可以了|即可)$/i, "")
+    .replace(/^(播放|放一个|放一首|放|播一个|播|来一首|我要听|我想听|想听)\s*/i, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function isBarePlaybackCommand(prompt) {
+  const normalized = normalizeText(prompt).trim();
+  if (!/(播放|放|播|听)/.test(normalized)) return false;
+  return barePlaybackCommandTarget(prompt).length === 0;
+}
+
+async function handleBarePlaybackCommand(playlist, memory) {
+  const indexes = (memory.lastRecommendations || [])
+    .map(Number)
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < playlist.tracks.length && index !== state.index % playlist.tracks.length);
+  if (!indexes.length) {
+    return {
+      reply: "可以，但这句里没有具体歌名或风格。我不会把语气词当歌名搜；你说一个歌名、歌手或风格，我再播放。",
+      recommendations: [],
+      queued: false,
+      queuePreview: [],
+      memory
+    };
+  }
+  state.queue = indexes;
+  await rememberRecommendations(memory, indexes.map((index) => ({ index, track: playlist.tracks[index], score: 0 })));
+  return {
+    reply: `我把刚才那批候选接到后面了，共 ${indexes.length} 首。`,
+    recommendations: indexes.slice(0, 12).map((index) => recommendationFromMatch({ index, track: playlist.tracks[index], score: 0 })),
+    queued: true,
+    queuePreview: indexes.slice(0, 12).map((index) => ({
+      index,
+      title: playlist.tracks[index].title,
+      artist: playlist.tracks[index].artist,
+      album: playlist.tracks[index].album || ""
+    })),
+    memory
+  };
+}
+
 function recentRelaxedStyleAsk(memory) {
   return (memory?.recentAsks || [])
     .slice(1, 8)
@@ -2519,12 +2563,13 @@ function extractDirectTitleQuery(prompt) {
   const quoted = text.match(/[《“"「](.+?)[》”"」]/);
   if (quoted?.[1]) return quoted[1].trim();
   text = text
-    .replace(/^(请|帮我|给我|直接|现在|马上|立刻)\s*/i, "")
+    .replace(/^(?:(?:那就|那么|那|就|你|请|帮我|给我|直接|现在|马上|立刻)\s*)+/i, "")
     .replace(/^(播放|放一个|放一首|放|播一个|播|来一首|我要听|我想听|想听)\s*/i, "")
     .replace(/\s*(这首歌|这首|这歌|歌曲|音乐)\s*$/i, "")
+    .replace(/^(吧|呗|呀|啊|嘛|一下|一下吧|就行|好了|可以了|即可)$/i, "")
     .trim();
   if (!text || text.length > 80) return "";
-  if (/^(播放|推荐|搜索|检索|查询|找|搜|来点|换成|切到)$/i.test(text)) return "";
+  if (/^(播放|推荐|搜索|检索|查询|找|搜|来点|换成|切到|吧|呗|呀|啊|嘛|一下|就行)$/i.test(text)) return "";
   return text;
 }
 
@@ -2593,11 +2638,11 @@ async function finalizeDeepSeekChatResponse(response, { prompt, intent, payload,
       const album = item.album ? "《" + item.album + "》" : "";
       return (index + 1) + ". " + (item.title || "") + " - " + (item.artist || "") + album;
     })
-    .join("`n") || "无";
+    .join("\n") || "无";
   const queuePreview = (response.queuePreview || [])
     .slice(0, 8)
     .map((item, index) => (index + 1) + ". " + (item.title || "") + " - " + (item.artist || ""))
-    .join("`n") || "无";
+    .join("\n") || "无";
   const system = [
     "你是这个音乐电台的 chat 大脑。用户希望你像正常 DeepSeek 一样对话，同时能控制音乐播放。",
     "根据本地代码已经执行后的结果，生成一条自然中文回复。不要模板化，不要说自己只是规则系统。",
@@ -2610,8 +2655,8 @@ async function finalizeDeepSeekChatResponse(response, { prompt, intent, payload,
     "DeepSeek 判定：" + JSON.stringify(intent || {}),
     "当前歌曲：" + (payload.track?.title || "") + " - " + (payload.track?.artist || ""),
     "已执行结果：queued=" + Boolean(response.queued) + "，replyFallback=" + (response.reply || ""),
-    "候选歌曲：`n" + recommendations,
-    "后续队列：`n" + queuePreview,
+    "候选歌曲：\n" + recommendations,
+    "后续队列：\n" + queuePreview,
     "最近记忆：" + ((memory.recentAsks || []).slice(0, 6).join(" / "))
   ].join("\n");
   try {
@@ -2829,7 +2874,7 @@ async function dsMusicIntent(prompt, memory, payload) {
           `当前专辑：${payload.track.album || "未知"}`,
           `最近对话：${(memory.recentAsks || []).slice(0, 8).join(" / ")}`,
           `已知歌手别名：${Object.entries(memory.artistAliases || {}).map(([alias, target]) => `${alias}=${target}`).join("、") || "暂无"}`
-        ].join("`n")
+        ].join("\n")
       }],
       [
         "你只负责把用户的话解析成音乐意图，不要聊天。",
@@ -2844,7 +2889,7 @@ async function dsMusicIntent(prompt, memory, payload) {
         "如果用户明确说某歌手的歌，填 artist；例如接下来为我播放张宇的歌。",
         "不要把未知缩写强行展开；不确定就保留用户原词并降低 confidence。",
         "不要把当前正在播放的歌当成答案。"
-      ].join("`n")
+      ].join("\n")
     ), 3000, null);
     const parsed = parseLooseJson(reply);
     if (!parsed || typeof parsed !== "object") return null;
@@ -3085,21 +3130,21 @@ async function answerCurrentTrackQuestion(prompt, payload, memory) {
         `当前歌曲：${track.title}`,
         `歌手：${track.artist}`,
         `专辑：${track.album || "未知"}`,
-        lyricText ? `歌词摘录：` + "`n" + lyricText : "歌词摘录：暂无",
+        lyricText ? `歌词摘录：` + "\n" + lyricText : "歌词摘录：暂无",
         webFacts.length
-          ? `联网检索资料：` + "`n" + webFacts.map((item, index) => `${index + 1}. ${item.title}` + "`n" + `${item.extract}` + "`n" + `Source: ${item.url}`).join("`n`n")
+          ? `联网检索资料：` + "\n" + webFacts.map((item, index) => `${index + 1}. ${item.title}` + "\n" + `${item.extract}` + "\n" + `Source: ${item.url}`).join("\n\n")
           : wantsWebFacts(prompt)
             ? "联网检索资料：没有查到稳定资料；不要编造电影来源或奖项。"
             : "联网检索资料：用户未要求事实检索。",
         `最近聊天偏好：${memory.preferences.join("、") || "暂无"}`
-      ].join("`n") }],
+      ].join("\n") }],
       [
         "你是一个懂音乐、影视和流行文化的电台朋友。用户问的是当前正在播放的歌、歌手、专辑、歌词、标题含义、剧集来源或听感。",
         "请正常回答用户的问题，不要复读字段，不要解释你不能做什么，不要把问题改写成命令。",
         "可以结合歌名、歌手、专辑、歌词摘录和公开资料来讲；事实不确定时要说明不确定，不要编造。",
         "如果用户问 Rick and Morty、剧集、电影、奖项或创作背景，优先依据联网检索资料；资料没有覆盖时，不要编造具体集数或奖项。",
         "回答中文，像朋友认真介绍，长度可以是 1 到 3 段。"
-      ].join("`n")
+      ].join("\n")
     );
     return reply || fallback;
   } catch (error) {
@@ -3110,6 +3155,7 @@ async function answerCurrentTrackQuestion(prompt, payload, memory) {
 
 async function answerNormalChat(prompt, payload, memory, taste, weather) {
   const fallback = answerNormalChatFallback(prompt, payload, memory);
+  if (isIdentityQuestion(prompt)) return fallback;
   try {
     const reply = await aiChat(
       [{ role: "user", content: [
@@ -3119,7 +3165,7 @@ async function answerNormalChat(prompt, payload, memory, taste, weather) {
         `刚才推荐过的歌名：${(memory.lastRecommendationTitles || []).slice(0, 12).join(" / ") || "暂无"}`,
         `已记住偏好：${memory.preferences.join("、") || "暂无"}`,
         `隐藏上下文，不要主动提：${weather.city} ${weather.text} ${weather.temp}C`
-      ].join("`n") }],
+      ].join("\n") }],
       [
         `你是 ${taste.stationName} 的电台聊天伙伴，也是一个可以正常对话的 DeepSeek 聊天对象。`,
         "不要把每句话都理解成点歌命令。用户闲聊、追问、吐槽、纠错、问剧情、问歌词、问观点时，就按正常聊天回答。",
@@ -3128,7 +3174,7 @@ async function answerNormalChat(prompt, payload, memory, taste, weather) {
         "不要主动改播放队列；播放和检索已经由外层工具处理。你这里只负责把话答好。",
         "可以结合当前歌曲、最近对话、歌词、专辑、歌手常识来聊。事实不确定时自然说明不确定，不要装懂。",
         "用中文，像一个有音乐品味的朋友认真回应。"
-      ].join("`n")
+      ].join("\n")
     );
     return reply || fallback;
   } catch (error) {
@@ -3149,7 +3195,7 @@ async function answerDeepSeekChat(prompt, payload, memory, taste, weather, inten
           "如果用户是在表达想听某种风格但信息不够，你可以自然追问一个具体问题；如果只是闲聊、纠错、吐槽或追问，就正常回答。",
           "不要使用模板句，不要说自己是规则系统，不要把整句话当作歌名。",
           "用中文，像一个懂音乐的朋友认真回应。"
-        ].join("`n")
+        ].join("\n")
       },
       {
         role: "user",
@@ -3160,7 +3206,7 @@ async function answerDeepSeekChat(prompt, payload, memory, taste, weather, inten
           `最近几轮对话：${memory.recentAsks.slice(0, 12).join(" / ")}`,
           `已记住偏好：${memory.preferences.join("、") || "暂无"}`,
           `隐藏上下文，不要主动提：${weather.city} ${weather.text} ${weather.temp}C`
-        ].join("`n")
+        ].join("\n")
       }
     ]);
     return sanitizeStationReply(reply, fallback);
@@ -3174,6 +3220,9 @@ function answerNormalChatFallback(prompt, payload, memory) {
   const normalized = normalizeText(prompt);
   const track = payload?.track || {};
   const context = [track.title, track.artist, track.album].filter(Boolean).join(" / ");
+  if (isIdentityQuestion(prompt)) {
+    return "我是 Claudio 里的 Station，负责聊天、理解你的听歌需求，也能在你明确说播放或推荐时帮你处理队列。普通聊天我不会动播放列表。";
+  }
   const peopleGuess = normalized.match(/你觉得(.+?)和(.+?)(像不像|像吗|相似|是不是像)/)
     || normalized.match(/(.+?)和(.+?)(像不像|像吗|相似)/);
   if (peopleGuess) {
@@ -3192,6 +3241,10 @@ function answerNormalChatFallback(prompt, payload, memory) {
     return `这个问题我会当普通聊天接，不会动播放列表。当前上下文是 ${context || "这首歌"}，你把想追问的对象说完整一点，我继续按聊天回答。`;
   }
   return `我这边 AI 回复临时没接上，只能先按当前上下文 ${context || "这首歌"} 接一句：这条不是点歌命令，我不会改队列。`;
+}
+
+function isIdentityQuestion(prompt) {
+  return /^(你是谁|你是什么|你叫啥|你叫什么|介绍一下你自己)[？?。！!]*$/i.test(normalizeText(prompt));
 }
 
 function trackWeatherScore(track, weather) {
@@ -3276,7 +3329,7 @@ async function generateHostLine(track, nextTrack) {
     "生成一段自然、有质感的中文电台口播，只围绕当前歌曲、歌手、专辑和听感。",
     "不要主动说下一首，不要提天气或日程，不要编造年份、奖项和创作故事。",
     "输出中文，1 到 4 句话。"
-  ].filter(Boolean).join("`n");
+  ].filter(Boolean).join("\n");
 
   const user = [
     `隐藏上下文，不要主动提：${dayPartLabel()} / ${weather.city} ${weather.text} ${weather.temp}C / ${weatherMood(weather)}`,
@@ -3285,7 +3338,7 @@ async function generateHostLine(track, nextTrack) {
     `专辑：${track.album || "未知"}`,
     `标签/来源：${track.mood || track.source || "未知"}`,
     `时长：${track.duration || "未知"} 秒`,
-  ].join("`n");
+  ].join("\n");
 
   try {
     const result = await aiChat([{ role: "user", content: user }], system);
@@ -4228,6 +4281,18 @@ async function handleApi(req, res, pathname) {
     const memory = await rememberChat(prompt);
     const chatMayChangePlayback = wantsPlaybackAction(prompt) || wantsImmediateSwitch(prompt) || wantsMusicContinuation(prompt);
     if (chatMayChangePlayback) rememberPlaybackContext("chat");
+    if (isIdentityQuestion(prompt)) {
+      return json(res, {
+        reply: answerNormalChatFallback(prompt, payload, memory),
+        recommendations: [],
+        queued: false,
+        queuePreview: [],
+        memory
+      });
+    }
+    if (isBarePlaybackCommand(prompt)) {
+      return json(res, await handleBarePlaybackCommand(playlist, memory));
+    }
     if (pendingTitleIsFresh(memory) && wantsPendingTitlePlayback(prompt)) {
       return json(res, await playTitleImmediately(memory.pendingTitle, playlist, memory));
     }
