@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-chat-bare-playback-v308";
+const APP_VERSION = "2026-06-16-ui-label-mojibake-v309";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
