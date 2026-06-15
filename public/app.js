@@ -973,6 +973,7 @@ function updateClock() {
   }).format(new Date());
   if (els.weather) els.weather.dataset.time = time;
   if (state?.weather) updateWeatherLabel(state.weather);
+  else updateWeatherLabel(null);
 }
 
 function updateWeatherLabel(weather) {
@@ -981,6 +982,12 @@ function updateWeatherLabel(weather) {
     minute: "2-digit",
     hour12: false
   }).format(new Date());
+  if (!weather) {
+    const html = `<span class="panel-time">${escapeHtml(time)}</span><span>天气</span>`;
+    if (els.weather) els.weather.innerHTML = html;
+    if (els.homeWeather) els.homeWeather.innerHTML = html;
+    return;
+  }
   const weatherMap = {
     clear: "晴",
     sunny: "晴",
@@ -1879,20 +1886,21 @@ function renderHistory(history) {
 
 async function loadTaste() {
   const data = await api("/api/profile");
-  const profile = data.profile;
+  const profile = data.profile || { styles: [], topArtists: [], summary: "" };
   const chips = [
-    ...profile.styles.map((item) => item.name),
-    ...profile.topArtists.slice(0, 4).map((item) => item.name)
+    ...(profile.styles || []).map((item) => item.name),
+    ...(profile.topArtists || []).slice(0, 4).map((item) => item.name)
   ].slice(0, 12);
-  els.tasteList.innerHTML = chips.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
-  els.profileSummary.textContent = profile.summary;
+  if (els.tasteList) els.tasteList.innerHTML = chips.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+  if (els.profileSummary) els.profileSummary.textContent = profile.summary || "";
   updateChatMemory(data.memory);
 }
 
 function updateChatMemory(memory) {
   if (!memory) return;
   const prefs = memory.preferences?.length ? memory.preferences.join(" / ") : "还在学习你的口味";
-  const text = `Taste memory · ${prefs}`;
+  const recent = memory.recentAsks?.length ? `最近：${memory.recentAsks.slice(0, 2).join(" / ")}` : "";
+  const text = [`Memory on · ${prefs}`, recent].filter(Boolean).join(" · ");
   if (els.chatMemory) els.chatMemory.textContent = text;
   if (els.homeChatMemory) els.homeChatMemory.textContent = text;
 }
@@ -2087,6 +2095,15 @@ async function handlePlayButtonClick(event) {
   if (audioUnlockPending && state?.playing) {
     await resumeAudioAfterGesture();
     return;
+  }
+  if (state?.playing && state?.track) {
+    const currentAudioKey = audioKey(state.track);
+    if (!hasAudibleCurrentAudio(currentAudioKey) && pendingAudioKey !== currentAudioKey) {
+      audioContext?.resume?.().catch(() => {});
+      primeAudioPlayback().catch(() => {});
+      startAudio(state.track);
+      return;
+    }
   }
   await setPlaying(!state?.playing);
 }

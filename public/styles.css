@@ -10201,6 +10201,55 @@ body.immersive-lyrics-open.lyrics-queue-open #playlist .panel-back-button {
   display: none !important;
 }
 
+/* v311: keep the chat return header visible after the home redesign */
+#chat.chat-panel .panel-sticky {
+  display: block !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 8 !important;
+  padding: 0 0 12px !important;
+  background: #10161d !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+#chat.chat-panel .panel-head {
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  min-height: 44px !important;
+  height: auto !important;
+}
+
+#chat.chat-panel .panel-back-button {
+  display: grid !important;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  place-items: center !important;
+  border: 0 !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  color: #f7f2ea !important;
+  font-size: 24px !important;
+  line-height: 1 !important;
+}
+
+#chat.chat-panel .panel-head h3 {
+  display: block !important;
+  margin: 0 !important;
+  color: #f7f2ea !important;
+  font-size: 20px !important;
+}
+
+#chat.chat-panel .panel-head > span {
+  display: block !important;
+  color: rgba(247, 242, 234, 0.46) !important;
+  font-size: 12px !important;
+  text-transform: none !important;
+}
+
 body.immersive-lyrics-open.lyrics-queue-open #playlist .panel-head h3 {
   display: inline-flex !important;
   align-items: baseline !important;
@@ -10310,6 +10359,60 @@ body.immersive-lyrics-open.lyrics-queue-open #playlist .row-duration {
   font-size: 18px !important;
   font-weight: 500 !important;
   text-align: right !important;
+}
+
+/* v311-final: chat page keeps a compact visible return header */
+#chat.chat-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+}
+
+#chat.chat-panel .panel-sticky {
+  display: block !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 8 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 0 12px !important;
+  align-self: start !important;
+  background: #10161d !important;
+}
+
+#chat.chat-panel .panel-head {
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  min-height: 44px !important;
+  height: auto !important;
+}
+
+#chat.chat-panel .panel-back-button {
+  display: grid !important;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  place-items: center !important;
+  border: 0 !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  color: #f7f2ea !important;
+  font-size: 24px !important;
+  line-height: 1 !important;
+}
+
+#chat.chat-panel .panel-head h3 {
+  display: block !important;
+  margin: 0 !important;
+  color: #f7f2ea !important;
+  font-size: 20px !important;
+}
+
+#chat.chat-panel .panel-head > span {
+  display: block !important;
+  color: rgba(247, 242, 234, 0.46) !important;
+  font-size: 12px !important;
+  text-transform: none !important;
 }
 
 /* v252 final: 5 x 2 controls and dark compact queue */
