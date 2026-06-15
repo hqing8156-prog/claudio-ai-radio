@@ -593,6 +593,63 @@ input:focus-visible,
   white-space: nowrap;
 }
 
+.weather-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.weather-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  line-height: 1;
+  color: #f3efe7;
+}
+
+.weather-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.weather-icon-sunny {
+  color: #ffd36b;
+}
+
+.weather-icon-cloudy {
+  color: #d7dee8;
+}
+
+.weather-icon-rain {
+  color: #7fc4ff;
+}
+
+.weather-icon-snow {
+  color: #e9f5ff;
+}
+
+.weather-temp {
+  color: #c7d0da;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-text {
+  color: #d7dee8;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .panel-time {
   color: var(--green);
   font-size: 15px;
@@ -8764,6 +8821,20 @@ body {
   font-size: 15px;
 }
 
+.home-weather .weather-badge {
+  gap: 10px;
+}
+
+.home-weather .weather-icon {
+  width: 24px;
+  min-width: 24px;
+}
+
+.home-weather .weather-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
 .home-card {
   min-width: 0;
   min-height: 0;
@@ -8785,6 +8856,24 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.home-queue-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.home-queue-title h3 {
+  margin-bottom: 0;
+}
+
+.home-queue-meta {
+  color: #95a0ad;
+  font-size: 13px;
+  font-weight: 560;
+  white-space: nowrap;
 }
 
 .home-card-head button,
@@ -8964,6 +9053,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.home-queue-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  min-width: 38px;
+  font-variant-numeric: tabular-nums;
 }
 
 .home-chat p {
@@ -9264,6 +9362,13 @@ body.immersive-lyrics-open .controls #playBtn {
   min-height: 0 !important;
 }
 
+.home-queue {
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+  gap: 12px !important;
+  overflow: hidden !important;
+}
+
 .home-playlist-grid {
   max-height: none !important;
 }
@@ -9271,8 +9376,11 @@ body.immersive-lyrics-open .controls #playBtn {
 .home-queue-list {
   min-height: 0 !important;
   max-height: 100% !important;
+  align-content: start !important;
   overflow-y: auto !important;
-  padding-right: 4px !important;
+  overflow-x: hidden !important;
+  padding: 0 4px 18px 0 !important;
+  box-sizing: border-box !important;
 }
 
 .home-queue-list::-webkit-scrollbar {
@@ -9285,7 +9393,68 @@ body.immersive-lyrics-open .controls #playBtn {
 }
 
 .home-queue-item {
-  min-height: 48px !important;
+  min-height: 62px !important;
+  grid-template-columns: 38px minmax(0, 1fr) !important;
+  align-items: start !important;
+  padding: 10px 18px !important;
+}
+
+.home-queue-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.home-queue-item strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-queue-item small {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: #95a0ad;
+  white-space: normal;
+  text-overflow: initial;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+#playlist .playlist-list {
+  padding-bottom: 14px;
+  box-sizing: border-box;
+}
+
+#playlist .playlist-row {
+  min-height: 72px;
+  align-items: start;
+}
+
+#playlist .row-main {
+  display: grid;
+  gap: 4px;
+}
+
+#playlist .row-main strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#playlist .row-main small {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  white-space: normal;
+  text-overflow: initial;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .home-queue-actions {

@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-chat-back-header-v311";
+const APP_VERSION = "2026-06-16-home-playlist-covers-v319";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
@@ -1187,7 +1187,7 @@ async function readNeteaseSourceCards(extraPlaylistIds = []) {
     .filter((id) => /^\d{4,}$/.test(id)))];
   for (const playlistId of playlistIds) {
     const fallbackName = NETEASE_PLAYLIST_NAMES[playlistId] || `Playlist ${playlistId}`;
-    tasks.push(readNeteasePlaylistCard(base, { id: playlistId, name: fallbackName })
+    tasks.push(readNeteasePlaylistTracks(base, { id: playlistId, name: fallbackName })
       .then((item) => {
         item.source.name = NETEASE_PLAYLIST_NAMES[playlistId] || item.source.name || fallbackName;
         return cardFromItem(`playlist-${playlistId}`, item.source.name, item);
@@ -3658,6 +3658,61 @@ async function playbackSequence(limit = 600) {
   };
 }
 
+async function deleteSequenceEntry(body = {}) {
+  const playlist = await loadPlaylist();
+  const activePlaylist = activePlaybackPlaylist(playlist);
+  const source = String(body.source || "").trim();
+  const index = Number(body.index);
+  const normalizedIndex = Number.isInteger(index) ? index : -1;
+  const sourceId = String(body.sourceId || "").trim();
+  if (!source || source === "current") return false;
+
+  let changed = false;
+  const sameTrack = (track) => {
+    if (!track) return false;
+    const trackId = String(track.sourceId || track.id || "").trim();
+    if (sourceId && trackId) return trackId === sourceId;
+    return false;
+  };
+
+  if (source === "next") {
+    const before = state.nextTracks?.length || 0;
+    state.nextTracks = filterPlaybackTracks(state.nextTracks || []).filter((track) => !sameTrack(track));
+    changed = (state.nextTracks.length !== before);
+  } else if (source === "queue") {
+    const queue = Array.isArray(state.queue) ? [...state.queue] : [];
+    const removeAt = queue.findIndex((queuedIndex) => Number(queuedIndex) === normalizedIndex);
+    if (removeAt >= 0) {
+      queue.splice(removeAt, 1);
+      state.queue = queue;
+      changed = true;
+    }
+  } else if (source === "chat") {
+    const tracks = filterPlaybackTracks(state.nextSessionPlaylist?.tracks || []);
+    const nextTracks = tracks.filter((track) => !sameTrack(track));
+    if (nextTracks.length !== tracks.length) {
+      state.nextSessionPlaylist = nextTracks.length
+        ? { ...(state.nextSessionPlaylist || {}), tracks: nextTracks }
+        : null;
+      changed = true;
+    }
+  } else if (source === "library") {
+    if (!activePlaylist.tracks.length) return false;
+    const current = activePlaybackPointer(playlist);
+    const queue = [];
+    const total = activePlaylist.tracks.length;
+    for (let offset = 1; offset < total; offset += 1) {
+      const futureIndex = (current.index + offset) % total;
+      if (futureIndex === normalizedIndex) continue;
+      queue.push(futureIndex);
+    }
+    state.queue = queue;
+    changed = true;
+  }
+
+  return changed;
+}
+
 async function handleApi(req, res, pathname) {
   if (pathname === "/api/stream") {
     res.writeHead(200, {
@@ -3673,6 +3728,14 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "GET" && pathname === "/api/now") return json(res, await currentPayload());
   if (req.method === "GET" && pathname === "/api/sequence") return json(res, await playbackSequence());
+  if (req.method === "DELETE" && pathname === "/api/sequence") {
+    const body = await parseBody(req);
+    rememberPlaybackContext("sequence-delete");
+    const changed = await deleteSequenceEntry(body);
+    if (!changed) return json(res, await currentPayload());
+    await broadcast();
+    return json(res, await currentPayload());
+  }
   if (req.method === "GET" && pathname === "/api/health") return json(res, {
     ok: true,
     version: APP_VERSION,

@@ -190,6 +190,7 @@ const els = {
   homeQueueOpen: $("#homeQueueOpen"),
   homePlaylistUndo: $("#homePlaylistUndo"),
   homePlaylistRedo: $("#homePlaylistRedo"),
+  homeQueueMeta: $("#homeQueueMeta"),
   homeQueueList: $("#homeQueueList"),
   homeChatOpen: $("#homeChatOpen"),
   homeChatMemory: $("#homeChatMemory"),
@@ -273,6 +274,12 @@ let pendingRestoreSeek = 0;
 let primedAudio = null;
 const silentPrimerSrc = "data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YTAAAAAA";
 const fixedNeteasePlaylistIds = ["13580387815", "7289914342", "9764261322", "6956075751"];
+const fixedNeteasePlaylistNames = {
+  "13580387815": "与你正当时",
+  "7289914342": "不知道怎么命名",
+  "9764261322": "难道逆水行舟的执念 是你刻在船舷的那一剑",
+  "6956075751": "往事宛如走马灯般在眼前浮现"
+};
 const protectedSongidSources = new Set(["local", "daily", "personal_fm", "playlist-7067937840", ...fixedNeteasePlaylistIds.map((id) => `playlist-${id}`)]);
 const playlistPageSize = 80;
 const sourceCardCacheKey = "claudio-source-cards-v2";
@@ -524,21 +531,32 @@ function renderHomeQueuePreview(data = {}) {
   if (Array.isArray(data.items)) sequenceItems = data.items;
   if (els.homePlaylistUndo) els.homePlaylistUndo.disabled = !data.canUndoPlaylist;
   if (els.homePlaylistRedo) els.homePlaylistRedo.disabled = !data.canRedoPlaylist;
+  const sequenceCount = data.totalCount || items.length || 0;
+  if (els.homeQueueMeta) els.homeQueueMeta.textContent = `共 ${sequenceCount} 首`;
   els.homeQueueList.innerHTML = items.length
-    ? items.map((track, order) => `
+    ? items.map((track, order) => {
+      const displayIndex = Number.isInteger(Number(track.index)) && Number(track.index) >= 0
+        ? Number(track.index) + 1
+        : order + 1;
+      return `
       <button type="button" class="home-queue-item ${track.source === "current" ? "active-sequence" : ""}"
         data-home-queue-index="${order}"
+        data-sequence-source="${escapeHtml(track.source || "")}"
+        data-track-index="${escapeHtml(String(track.index ?? ""))}"
         data-source-id="${escapeHtml(track.sourceId || "")}"
         data-title="${escapeHtml(track.title || "")}"
         data-artist="${escapeHtml(track.artist || "")}"
         data-album="${escapeHtml(track.album || "")}"
         data-cover="${escapeHtml(track.cover || "")}"
         data-duration="${escapeHtml(track.duration || "")}">
-        <span>${escapeHtml(String(order + 1).padStart(2, "0"))}</span>
-        <strong>${escapeHtml(track.title || "-")}</strong>
-        <small>${escapeHtml(track.artist || "")}</small>
+        <span class="home-queue-index">${escapeHtml(String(displayIndex).padStart(2, "0"))}</span>
+        <span class="home-queue-copy">
+          <strong>${escapeHtml(track.title || "-")}</strong>
+          <small>${escapeHtml(track.artist || "")}</small>
+        </span>
       </button>
-    `).join("")
+    `;
+    }).join("")
     : `<article class="home-queue-empty">暂无播放序列</article>`;
 }
 
@@ -548,7 +566,7 @@ function fallbackHomePlaylists() {
     { id: "daily", name: "每日推荐", source: "daily" },
     { id: "personal_fm", name: "私人雷达", source: "personal_fm" },
     { id: "playlist-7067937840", name: "one thousand and nine hundred", source: "playlist-7067937840" },
-    ...fixedNeteasePlaylistIds.map((id) => ({ id: `playlist-${id}`, name: `Playlist ${id}`, source: `playlist-${id}` }))
+    ...fixedNeteasePlaylistIds.map((id) => ({ id: `playlist-${id}`, name: fixedNeteasePlaylistNames[id] || `Playlist ${id}`, source: `playlist-${id}` }))
   ];
 }
 
@@ -982,28 +1000,65 @@ function updateWeatherLabel(weather) {
     minute: "2-digit",
     hour12: false
   }).format(new Date());
+  const weatherIconSvg = (kind = "default") => {
+    if (kind === "sunny") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.8v2.4M12 18.8v2.4M4.8 12H2.4M21.6 12h-2.4M5.9 5.9 4.2 4.2M19.8 19.8l-1.7-1.7M18.1 5.9l1.7-1.7M5.9 18.1l-1.7 1.7"></path></svg>`;
+    }
+    if (kind === "rain") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 18.2a4.7 4.7 0 1 1 .8-9.3 5.7 5.7 0 0 1 10.7 2 3.5 3.5 0 0 1-.5 7.1H7.5Z"></path><path d="M9 19.2l-1 2.2M13 19.2l-1 2.2M17 19.2l-1 2.2"></path></svg>`;
+    }
+    if (kind === "snow") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 17.8a4.7 4.7 0 1 1 .8-9.3 5.7 5.7 0 0 1 10.7 2 3.5 3.5 0 0 1-.5 7.1H7.5Z"></path><path d="M10 19.2v3.2M8.5 20.4l3 1.8M11.5 20.4l-3 1.8M15 19.2v3.2M13.5 20.4l3 1.8M16.5 20.4l-3 1.8"></path></svg>`;
+    }
+    if (kind === "cloudy") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.2" cy="8.3" r="2.8"></circle><path d="M8.2 3.2v1.5M8.2 11.9v1.5M3.1 8.3h1.5M11.8 8.3h1.5M4.6 4.7l1.1 1.1M10.7 10.8l1.1 1.1M11.8 4.7l-1.1 1.1"></path><path d="M8.4 18.2a4.5 4.5 0 1 1 .8-8.9 5.3 5.3 0 0 1 9.9 1.8 3.2 3.2 0 0 1-.5 7.1H8.4Z"></path></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="1.7"></circle><path d="M12 3.5v3M12 17.5v3M4.5 12h3M16.5 12h3M6.5 6.5l2.1 2.1M15.4 15.4l2.1 2.1M17.5 6.5l-2.1 2.1M8.6 15.4l-2.1 2.1"></path></svg>`;
+  };
+  const renderWeather = ({ icon = "default", text = "天气", temp = "", title = "天气" } = {}) => `
+    <span class="panel-time">${escapeHtml(time)}</span>
+    <span class="weather-badge" title="${escapeHtml(title)}">
+      <span class="weather-icon weather-icon-${escapeHtml(icon)}" aria-hidden="true">${weatherIconSvg(icon)}</span>
+      <span class="weather-text">${escapeHtml(text)}</span>
+      ${temp ? `<span class="weather-temp">${escapeHtml(temp)}</span>` : ""}
+    </span>
+  `;
   if (!weather) {
-    const html = `<span class="panel-time">${escapeHtml(time)}</span><span>天气</span>`;
+    const html = renderWeather();
     if (els.weather) els.weather.innerHTML = html;
     if (els.homeWeather) els.homeWeather.innerHTML = html;
     return;
   }
-  const weatherMap = {
-    clear: "晴",
-    sunny: "晴",
-    clouds: "多云",
-    cloudy: "多云",
-    overcast: "阴",
-    rain: "雨",
-    snow: "雪",
-    mist: "雾",
-    fog: "雾",
-    haze: "霾"
-  };
-  const raw = String(weather.text || "").replace(/^当前位置\s*/, "").trim().toLowerCase();
-  const text = weatherMap[raw] || String(weather.text || "").replace(/^当前位置\s*/, "").trim() || "天气";
+  const rawText = String(weather.text || "").replace(/^当前位置\s*/, "").trim();
+  const raw = rawText.toLowerCase();
+  let text = "天气";
+  let icon = "default";
+  if (/晴/.test(rawText) || /clear|sunny/.test(raw)) {
+    text = "晴";
+    icon = "sunny";
+  } else if (/多云/.test(rawText) || /clouds|cloudy/.test(raw)) {
+    text = "多云";
+    icon = "cloudy";
+  } else if (/阴/.test(rawText) || /overcast/.test(raw)) {
+    text = "阴";
+    icon = "cloudy";
+  } else if (/雨/.test(rawText) || /rain|shower|storm/.test(raw)) {
+    text = "雨";
+    icon = "rain";
+  } else if (/雪/.test(rawText) || /snow|sleet/.test(raw)) {
+    text = "雪";
+    icon = "snow";
+  } else if (/雾/.test(rawText) || /mist|fog/.test(raw)) {
+    text = "雾";
+    icon = "cloudy";
+  } else if (/霾/.test(rawText) || /haze/.test(raw)) {
+    text = "霾";
+    icon = "default";
+  } else if (rawText) {
+    text = rawText;
+  }
   const temp = Number.isFinite(Number(weather.temp)) ? `${Math.round(Number(weather.temp))}°C` : "";
-  const html = `<span class="panel-time">${escapeHtml(time)}</span><span>${escapeHtml(text)}${temp ? `&nbsp;&nbsp;${escapeHtml(temp)}` : ""}</span>`;
+  const html = renderWeather({ icon, text, temp, title: temp ? `${text} ${temp}` : text });
   if (els.weather) els.weather.innerHTML = html;
   if (els.homeWeather) els.homeWeather.innerHTML = html;
 }
@@ -1898,8 +1953,15 @@ async function loadTaste() {
 
 function updateChatMemory(memory) {
   if (!memory) return;
-  const prefs = memory.preferences?.length ? memory.preferences.join(" / ") : "还在学习你的口味";
-  const recent = memory.recentAsks?.length ? `最近：${memory.recentAsks.slice(0, 2).join(" / ")}` : "";
+  const cleanMemoryText = (value) => String(value || "")
+    .replace(/[?？]{2,}/g, "")
+    .replace(/\uFFFD/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const prefsList = (memory.preferences || []).map(cleanMemoryText).filter(Boolean);
+  const recentList = (memory.recentAsks || []).map(cleanMemoryText).filter(Boolean);
+  const prefs = prefsList.length ? prefsList.join(" / ") : "还在学习你的口味";
+  const recent = recentList.length ? `最近：${recentList.slice(0, 2).join(" / ")}` : "";
   const text = [`Memory on · ${prefs}`, recent].filter(Boolean).join(" · ");
   if (els.chatMemory) els.chatMemory.textContent = text;
   if (els.homeChatMemory) els.homeChatMemory.textContent = text;
@@ -2040,6 +2102,22 @@ async function playSequenceItem(item, element) {
   } finally {
     finishOptimisticPlayback(element);
   }
+}
+
+async function deleteSequenceItem(item) {
+  if (!item || item.source === "current") return;
+  const payload = await api("/api/sequence", {
+    method: "DELETE",
+    body: JSON.stringify({
+      source: item.source || "",
+      index: Number.isInteger(Number(item.index)) ? Number(item.index) : -1,
+      sourceId: item.sourceId || "",
+      title: item.title || ""
+    })
+  });
+  paint(payload, { announce: false });
+  await refreshPlaybackSequenceViews();
+  showTransientStatus("已从播放序列移除");
 }
 
 async function setPlaying(playing) {
@@ -2358,16 +2436,25 @@ function sourceCardById(source) {
   return [...document.querySelectorAll(".source-card")].find((card) => card.dataset.source === source) || null;
 }
 
+function homePlaylistCardById(source) {
+  return [...document.querySelectorAll(".home-playlist-card")].find((card) => card.dataset.source === source) || null;
+}
+
 function normalizeCoverUrl(url) {
   return String(url || "").replace(/^http:/, "https:");
 }
 
 function updateSourceCardCaption(source, payload = {}) {
   const card = sourceCardById(source);
+  const homeCard = homePlaylistCardById(source);
   const cover = payload?.cover || payload?.source?.cover || payload?.recommendations?.find?.((item) => item.cover)?.cover || "";
   const name = payload?.name || payload?.source?.name || "";
   if (card && name) {
     const title = card.querySelector("strong");
+    if (title) title.textContent = name;
+  }
+  if (homeCard && name) {
+    const title = homeCard.querySelector("strong");
     if (title) title.textContent = name;
   }
   if (card && cover) {
@@ -2384,6 +2471,11 @@ function updateSourceCardCaption(source, payload = {}) {
     coverImg.src = safeCover;
     card.style.setProperty("--source-cover", `url("${safeCover.replace(/"/g, "%22")}")`);
     card.classList.add("has-source-cover");
+  }
+  if (homeCard && cover) {
+    const safeCover = normalizeCoverUrl(cover);
+    homeCard.style.setProperty("--home-playlist-cover", `url('${safeCover.replace(/'/g, "%27")}')`);
+    homeCard.classList.add("has-cover");
   }
   document.querySelectorAll(".source-card > span").forEach((caption) => caption.remove());
 }
@@ -2412,7 +2504,7 @@ function ensureFixedPlaylistCards() {
     button.className = "source-card playlist-source";
     button.dataset.source = source;
     button.dataset.playlistId = id;
-    button.innerHTML = `<strong>Playlist ${escapeHtml(id)}</strong>`;
+    button.innerHTML = `<strong>${escapeHtml(fixedNeteasePlaylistNames[id] || `Playlist ${id}`)}</strong>`;
     container.appendChild(button);
   });
   bindFixedPlaylistCards();
@@ -3085,11 +3177,29 @@ els.playlistList?.addEventListener("click", async (event) => {
   }
 });
 
+els.playlistList?.addEventListener("contextmenu", async (event) => {
+  const row = event.target.closest(".playlist-row");
+  if (!row?.dataset.sequence) return;
+  const item = sequenceItems[Number(row.dataset.sequence)];
+  if (!item || item.source === "current") return;
+  event.preventDefault();
+  await deleteSequenceItem(item);
+});
+
 els.homeQueueList?.addEventListener("click", async (event) => {
   const row = event.target.closest(".home-queue-item");
   if (!row?.dataset.homeQueueIndex) return;
   const item = sequenceItems[Number(row.dataset.homeQueueIndex)];
   await playSequenceItem(item, row);
+});
+
+els.homeQueueList?.addEventListener("contextmenu", async (event) => {
+  const row = event.target.closest(".home-queue-item");
+  if (!row?.dataset.homeQueueIndex) return;
+  const item = sequenceItems[Number(row.dataset.homeQueueIndex)];
+  if (!item || item.source === "current") return;
+  event.preventDefault();
+  await deleteSequenceItem(item);
 });
 
 els.songidSearch?.addEventListener("submit", async (event) => {
