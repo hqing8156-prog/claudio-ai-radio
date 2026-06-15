@@ -861,6 +861,7 @@ function isBlockedGenreTrack(track = {}) {
   const text = [title, album, aliases, artists, mood, tags, reason].filter(Boolean).join(" ");
   const normalized = normalizeText(text);
   const compact = normalized.replace(/\s+/g, "");
+  const smokyVoice = /烟嗓/i.test(normalized) || /烟嗓/i.test(compact);
   const rap = /说唱|嘻哈|饶舌|中文说唱|国说|rapper|\brap\b|hip[\s.-]*hop|\btrap\b|drill|boom\s*bap|freestyle/i.test(normalized)
     || /说唱|嘻哈|饶舌|hiphop|trap|drill|boombap|freestyle/i.test(compact);
   const electronic = /电子|电音|电子舞曲|舞曲|合成器|浩室|出神|迷幻|硬核|鼓打贝斯|\bedm\b|electronic|electronica|electronique|synthwave|synth\s*pop|future\s*bass|future\s*house|bass\s*house|deep\s*house|tech\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance|electro\s*house|progressive\s*house/i.test(normalized)
@@ -869,18 +870,20 @@ function isBlockedGenreTrack(track = {}) {
     && !/future\s*house|bass\s*house|deep\s*house|tech\s*house|electro\s*house|progressive\s*house/i.test(normalized)
     && !/futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse/i.test(compact)
     && !/电子|电音|电子舞曲|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance/i.test(normalized);
-  return rap || (electronic && !plainHouseOnly);
+  return smokyVoice || rap || (electronic && !plainHouseOnly);
 }
 
 function isBlockedGenreQuery(query = "") {
   const normalized = normalizeText(query);
   const compact = normalized.replace(/\s+/g, "");
+  const smokyVoice = /烟嗓/i.test(normalized) || /烟嗓/i.test(compact);
   const plainHouseOnly = /\bhouse\b/i.test(normalized)
     && !/future\s*house|bass\s*house|deep\s*house|tech\s*house|electro\s*house|progressive\s*house/i.test(normalized)
     && !/futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse/i.test(compact)
     && !/电子|电音|电子舞曲|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized);
   if (plainHouseOnly) return false;
-  return /说唱|嘻哈|饶舌|中文说唱|国说|\brap\b|hip[\s.-]*hop|\btrap\b|\bedm\b|电子舞曲|电音|electronic|electronica|synthwave|future\s*bass|future\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized)
+  return smokyVoice
+    || /说唱|嘻哈|饶舌|中文说唱|国说|\brap\b|hip[\s.-]*hop|\btrap\b|\bedm\b|电子舞曲|电音|electronic|electronica|synthwave|future\s*bass|future\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized)
     || /说唱|嘻哈|饶舌|hiphop|trap|edm|电子舞曲|电音|synthwave|futurebass|futurehouse|dubstep|hardstyle|psytrance|drumandbass/i.test(compact);
 }
 
