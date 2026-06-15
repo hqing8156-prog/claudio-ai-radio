@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101614">
+    <meta name="description" content="A local AI radio console for NetEase playlists, lyrics, playback queue, and DeepSeek-powered music chat.">
+    <meta property="og:title" content="Claudio AI Radio">
+    <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
+    <meta property="og:type" content="website">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/styles.css?v=305">
+    <title>Claudio AI Radio</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#home">跳到内容</a>
+    <main class="shell">
+      <section class="player" aria-label="AI radio player">
+        <div class="cover" id="cover" role="button" tabindex="0" aria-label="打开沉浸式歌词">
+          <img id="coverArt" class="cover-art" alt="">
+          <div class="cover-reflection" id="coverReflection" aria-hidden="true">
+            <img id="coverReflectionArt" alt="">
+          </div>
+          <div class="disc">
+            <span></span>
+          </div>
+          <canvas id="scope" width="320" height="120" aria-hidden="true"></canvas>
+        </div>
+
+        <div class="track">
+          <p id="mood">Local Radio</p>
+          <h1 id="title">Claudio AI Radio</h1>
+          <h2 id="artist">Local Demo</h2>
+          <div class="track-album" id="album"></div>
+          <div class="library-count" id="libraryCount"></div>
+        </div>
+
+        <div class="host" hidden>
+          <p id="hostLine"></p>
+        </div>
+
+        <div class="controls">
+          <div class="controls-row controls-row-primary">
+            <button id="prevBtn" class="icon-button" aria-label="Previous track" title="Previous">?</button>
+            <button id="playBtn" class="play" aria-label="Play" title="Play">?</button>
+            <button id="nextBtn" class="icon-button" aria-label="Next track" title="Next">?</button>
+          </div>
+          <div class="controls-row controls-row-tools">
+            <button id="favoritePlaylistBtn" class="favorite-playlist-button" aria-label="添加到自定义歌单" title="添加到自定义歌单">+</button>
+            <div id="favoritePlaylistMenu" class="favorite-playlist-menu hidden" role="menu"></div>
+            <button id="modeBtn" class="mode-button" aria-label="切换播放方式" title="切换播放方式">?</button>
+            <button id="qualityBtn" class="quality-button" aria-label="音质" title="音质">SQ</button>
+            <div id="qualityMenu" class="quality-menu hidden" role="menu" aria-label="选择音质"></div>
+            <button id="likeBtn" class="like-current" aria-label="红心当前歌曲" title="红心到网易云">?</button>
+            <button id="desktopLyricsBtn" class="desktop-lyrics-button" aria-label="Desktop lyrics" title="Desktop lyrics">L</button>
+            <button id="sequenceBtn" class="sequence-button" aria-label="播放序列" title="播放序列"></button>
+          </div>
+        </div>
+
+        <div class="progress">
+          <span id="elapsed">0:00</span>
+          <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+          <span id="duration">0:00</span>
+        </div>
+
+        <nav class="tabs" aria-label="Views">
+          <button class="active" data-view="home">首页</button>
+          <button data-view="songid">歌单</button>
+          <button data-view="profile">歌词</button>
+          <button data-view="chat">聊天</button>
+        </nav>
+      </section>
+
+      <section class="panel home-panel" id="home" data-panel>
+        <div class="home-weather" id="homeWeather"></div>
+        <section class="home-card home-sources" aria-label="歌单入口">
+          <div class="home-card-head">
+            <h3>歌单</h3>
+            <button type="button" id="homePlaylistAdd" aria-label="导入网易云歌单">＋</button>
+          </div>
+          <form id="homePlaylistImport" class="home-playlist-import hidden">
+            <input id="homePlaylistImportInput" type="text" inputmode="numeric" placeholder="输入网易云歌单 ID">
+            <button type="submit">导入</button>
+            <button type="button" id="homePlaylistImportCancel" aria-label="取消导入">取消</button>
+          </form>
+          <div class="home-playlist-grid" id="homePlaylistGrid"></div>
+        </section>
+        <section class="home-card home-queue" aria-label="播放序列">
+          <div class="home-card-head">
+            <h3>播放序列</h3>
+            <div class="home-queue-actions" aria-label="播放列表历史">
+              <button type="button" id="homePlaylistUndo" aria-label="回撤播放列表" title="回撤">?</button>
+              <button type="button" id="homePlaylistRedo" aria-label="恢复播放列表" title="恢复">?</button>
+            </div>
+          </div>
+          <div id="homeQueueList" class="home-queue-list"></div>
+        </section>
+        <section class="home-card home-chat" aria-label="聊天">
+          <h3>聊天</h3>
+          <p id="homeChatMemory">memory on</p>
+          <button type="button" id="homeChatOpen">进入聊天</button>
+        </section>
+        <section class="home-card home-tasks" aria-label="日程">
+          <div class="home-card-head">
+            <h3>日程</h3>
+            <button type="button" id="homeTaskAdd" aria-label="添加日程">＋</button>
+          </div>
+          <form id="homeTaskForm" class="home-task-form hidden">
+            <input id="homeTaskInput" type="text" autocomplete="off" placeholder="添加一条日程">
+            <button type="submit">添加</button>
+            <button type="button" id="homeTaskCancel" aria-label="取消添加日程">取消</button>
+          </form>
+          <div id="homeTaskList" class="home-task-list"></div>
+        </section>
+      </section>
+
+      <section class="panel panel-scroll hidden" id="playlist" data-panel>
+        <div class="panel-sticky">
+          <div class="panel-head">
+            <button id="playlistBack" class="panel-back-button" type="button" aria-label="返回首页">?</button>
+            <h3>Playlist</h3>
+            <div class="playlist-head-actions">
+              <div class="playlist-history-actions" aria-label="播放列表历史">
+                <button id="playlistUndo" class="playlist-history-button" type="button" disabled aria-label="回撤播放列表" title="回撤">?</button>
+                <button id="playlistRedo" class="playlist-history-button" type="button" disabled aria-label="恢复播放列表" title="恢复">?</button>
+              </div>
+              <span id="playlistMeta">loading</span>
+            </div>
+          </div>
+          <form class="playlist-search" id="playlistSearch">
+            <input id="playlistInput" autocomplete="off" placeholder="搜索歌曲、歌手、专辑">
+          </form>
+        </div>
+        <div class="playlist-list" id="playlistList"></div>
+        <div class="playlist-pager">
+          <button id="playlistPrev" type="button">上一页</button>
+          <span id="playlistPage">1 / 1</span>
+          <button id="playlistNext" type="button">下一页</button>
+        </div>
+      </section>
+
+      <section class="panel panel-scroll lyrics-panel hidden" id="profile" data-panel>
+        <div class="panel-sticky">
+          <div class="panel-head">
+            <button class="panel-back-button" type="button" data-back-home aria-label="返回首页">?</button>
+            <h3>Lyrics</h3>
+            <span id="weather">weather</span>
+          </div>
+        </div>
+        <div class="lyric-stage" aria-label="Lyrics">
+          <p id="currentLyric">暂无歌词</p>
+          <small id="nextLyric"></small>
+          <div class="lyric-list" id="lyricList" aria-live="polite"></div>
+        </div>
+        <div class="profile-cache" aria-hidden="true">
+          <div id="tasteList" class="chips"></div>
+          <p class="profile-summary" id="profileSummary"></p>
+          <div class="history" id="history"></div>
+        </div>
+      </section>
+
+      <section class="panel panel-scroll hidden" id="songid" data-panel>
+        <div class="panel-sticky">
+          <div class="panel-head">
+            <button class="panel-back-button" type="button" data-back-home aria-label="返回首页">?</button>
+            <h3>歌曲入口</h3>
+            <button type="button" id="songidSourceAdd" class="songid-source-add" aria-label="导入网易云歌单">＋</button>
+          </div>
+          <form class="songid-search" id="songidSearch">
+            <input id="songidInput" autocomplete="off" placeholder="想听什么歌？也可以粘贴网易云歌曲ID">
+            <button type="submit">搜索</button>
+          </form>
+          <form id="songidSourceImport" class="songid-source-import hidden">
+            <input id="songidSourceImportInput" type="text" inputmode="numeric" placeholder="输入网易云歌单 ID">
+            <button type="submit">导入</button>
+            <button type="button" id="songidSourceImportCancel" aria-label="取消导入">取消</button>
+          </form>
+          <div class="source-cards">
+            <button type="button" class="source-card local-library" id="localPlaylistBtn" data-source="local">
+              <strong>我的喜欢</strong>
+            </button>
+            <button type="button" class="source-card daily" id="dailySourceBtn" data-source="daily">
+              <strong>每日推荐</strong>
+            </button>
+            <button type="button" class="source-card radar" id="fmSourceBtn" data-source="personal_fm">
+              <strong>私人雷达</strong>
+            </button>
+            <button type="button" class="source-card playlist-source" id="customPlaylistBtn" data-source="playlist-7067937840">
+              <strong>one thousand and nine hundred</strong>
+            </button>
+          </div>
+          <div class="songid-stage hidden" id="songidStage">
+            <div class="songid-toolbar">
+              <div class="songid-topic">
+                <button type="button" id="songidBack" class="songid-back" aria-label="返回唱片机首页">?</button>
+                <span id="songidMeta">选择一批网易云歌曲</span>
+              </div>
+              <div class="songid-actions">
+                <button type="button" id="songidPlayAll" disabled>播放全部</button>
+                <button type="button" id="songidAppendAll" disabled>追加播放</button>
+                <button type="button" id="songidEditIntro">编辑简介</button>
+                <button type="button" id="songidActionMenuBtn" class="songid-action-menu-button" aria-label="选择播放方式" aria-expanded="false" disabled>?</button>
+                <div id="songidActionMenu" class="songid-action-menu hidden" role="menu">
+                  <button type="button" data-action="append" role="menuitem">追加播放</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="songid-results hidden" id="songidResults"></div>
+      </section>
+
+      <section class="panel chat-panel hidden" id="chat" data-panel>
+        <div class="panel-sticky">
+          <div class="panel-head">
+            <button class="panel-back-button" type="button" data-back-home aria-label="返回首页">?</button>
+            <h3>Chat</h3>
+            <span>memory on</span>
+          </div>
+          <div class="chat-memory" id="chatMemory"></div>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+        <form class="chat-form" id="chatForm">
+          <input id="chatInput" autocomplete="off" placeholder="聊聊天，或说：我想听 Oh Wonder 的歌">
+          <button type="submit">发送</button>
+        </form>
+      </section>
+
+    </main>
+    <script src="/app.js?v=305" type="module"></script>
+  </body>
+</html>
