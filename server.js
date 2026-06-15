@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-play-button-audio-v305";
+const APP_VERSION = "2026-06-16-fix-local-mojibake-v306";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
@@ -81,7 +81,7 @@ const DEFAULT_PLAYBACK_STATE = {
   volume: 0.72,
   weatherLocation: null,
   // AI DJ disabled for now. Restore this line if the host copy is needed again:
-  // lastHostLine: "娆㈣繋鍥炴潵銆傝繖涓€鏈熶粠浣犵殑姝屽崟閲屾娊涓€娈电浜洪鐜囷紝鍏堟妸鑰虫湹鏀捐繘澹伴煶閲屻€?,
+  // lastHostLine: "欢迎回来。这一期从你的歌单里抽一段私人频率，先把耳朵放进声音里。",
   lastHostLine: "",
   queue: [],
   nextTracks: [],
@@ -623,7 +623,7 @@ async function getWeather() {
     const data = await response.json();
     value = {
       city: data.name || location?.label || city,
-      text: data.weather?.[0]?.description || "鏈煡",
+      text: data.weather?.[0]?.description || "未知",
       temp: Math.round(data.main?.temp || 0),
       source: "openweather"
     };
@@ -642,8 +642,8 @@ async function getWeather() {
     const data = await response.json();
     const code = data.current?.weather_code;
     value = {
-      city: location.label || "褰撳墠浣嶇疆",
-      text: weatherLabels.get(code) || "褰撳湴澶╂皵",
+      city: location.label || "当前位置",
+      text: weatherLabels.get(code) || "当地天气",
       temp: Math.round(data.current?.temperature_2m || 0),
       precipitation: data.current?.precipitation || 0,
       source: "open-meteo"
@@ -777,7 +777,7 @@ function neteaseSongSummary(song, score = 0) {
   const artistIds = artists.map((item) => String(item.id || "")).filter(Boolean);
   return {
     title: song.name || "",
-    artist: (song.ar || song.artists || []).map((item) => item.name).filter(Boolean).join(" / ") || "鏈煡姝屾墜",
+    artist: (song.ar || song.artists || []).map((item) => item.name).filter(Boolean).join(" / ") || "未知歌手",
     artistIds,
     artistId: artistIds[0] || "",
     album: album.name || "",
@@ -861,14 +861,14 @@ function isBlockedGenreTrack(track = {}) {
   const text = [title, album, aliases, artists, mood, tags, reason].filter(Boolean).join(" ");
   const normalized = normalizeText(text);
   const compact = normalized.replace(/\s+/g, "");
-  const rap = /璇村敱|鍢诲搱|楗惰垖|涓枃璇村敱|鍥借|rapper|\brap\b|hip[\s.-]*hop|\btrap\b|drill|boom\s*bap|freestyle/i.test(normalized)
-    || /璇村敱|鍢诲搱|楗惰垖|hiphop|trap|drill|boombap|freestyle/i.test(compact);
-  const electronic = /鐢靛瓙|鐢甸煶|鐢靛瓙鑸炴洸|鑸炴洸|鍚堟垚鍣▅娴╁|鍑虹|杩峰够|纭牳|榧撴墦璐濇柉|\bedm\b|electronic|electronica|electronique|synthwave|synth\s*pop|future\s*bass|future\s*house|bass\s*house|deep\s*house|tech\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance|electro\s*house|progressive\s*house/i.test(normalized)
-    || /鐢靛瓙|鐢甸煶|鐢靛瓙鑸炴洸|synthwave|synthpop|futurebass|futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse|dubstep|hardstyle|psytrance|drumandbass/i.test(compact);
+  const rap = /说唱|嘻哈|饶舌|中文说唱|国说|rapper|\brap\b|hip[\s.-]*hop|\btrap\b|drill|boom\s*bap|freestyle/i.test(normalized)
+    || /说唱|嘻哈|饶舌|hiphop|trap|drill|boombap|freestyle/i.test(compact);
+  const electronic = /电子|电音|电子舞曲|舞曲|合成器|浩室|出神|迷幻|硬核|鼓打贝斯|\bedm\b|electronic|electronica|electronique|synthwave|synth\s*pop|future\s*bass|future\s*house|bass\s*house|deep\s*house|tech\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance|electro\s*house|progressive\s*house/i.test(normalized)
+    || /电子|电音|电子舞曲|synthwave|synthpop|futurebass|futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse|dubstep|hardstyle|psytrance|drumandbass/i.test(compact);
   const plainHouseOnly = /\bhouse\b/i.test(normalized)
     && !/future\s*house|bass\s*house|deep\s*house|tech\s*house|electro\s*house|progressive\s*house/i.test(normalized)
     && !/futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse/i.test(compact)
-    && !/閻㈤潧鐡檤閻㈢敻鐓秥閻㈤潧鐡欓懜鐐存锤|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance/i.test(normalized);
+    && !/电子|电音|电子舞曲|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|\bdnb\b|drum\s*(?:and|&)\s*bass|hardstyle|psytrance/i.test(normalized);
   return rap || (electronic && !plainHouseOnly);
 }
 
@@ -878,10 +878,10 @@ function isBlockedGenreQuery(query = "") {
   const plainHouseOnly = /\bhouse\b/i.test(normalized)
     && !/future\s*house|bass\s*house|deep\s*house|tech\s*house|electro\s*house|progressive\s*house/i.test(normalized)
     && !/futurehouse|basshouse|deephouse|techhouse|electrohouse|progressivehouse/i.test(compact)
-    && !/閻㈤潧鐡檤閻㈢敻鐓秥閻㈤潧鐡欓懜鐐存锤|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized);
+    && !/电子|电音|电子舞曲|electronic|electronica|\bedm\b|synthwave|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized);
   if (plainHouseOnly) return false;
-  return /璇村敱|鍢诲搱|楗惰垖|涓枃璇村敱|鍥借|\brap\b|hip[\s.-]*hop|\btrap\b|\bedm\b|鐢靛瓙鑸炴洸|鐢甸煶|electronic|electronica|synthwave|future\s*bass|future\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized)
-    || /璇村敱|鍢诲搱|楗惰垖|hiphop|trap|edm|鐢靛瓙鑸炴洸|鐢甸煶|synthwave|futurebass|futurehouse|dubstep|hardstyle|psytrance|drumandbass/i.test(compact);
+  return /说唱|嘻哈|饶舌|中文说唱|国说|\brap\b|hip[\s.-]*hop|\btrap\b|\bedm\b|电子舞曲|电音|electronic|electronica|synthwave|future\s*bass|future\s*house|\bhouse\b|\btechno\b|\btrance\b|\bdubstep\b|hardstyle|psytrance|drum\s*(?:and|&)\s*bass/i.test(normalized)
+    || /说唱|嘻哈|饶舌|hiphop|trap|edm|电子舞曲|电音|synthwave|futurebass|futurehouse|dubstep|hardstyle|psytrance|drumandbass/i.test(compact);
 }
 
 async function searchNeteaseSongs(query, limit = 8) {
@@ -973,12 +973,12 @@ function neteaseSongTags(song = {}) {
 
   const fee = song.fee ?? song.privilege?.fee;
   if (fee === 1) tags.push("VIP");
-  if (fee === 4) tags.push("浠樿垂");
-  if (fee === 8) tags.push("璇曞惉");
-  if (song.hr || song.sq || song.privilege?.maxbr >= 999000) tags.push("瓒呮竻姣嶅甫");
+  if (fee === 4) tags.push("付费");
+  if (fee === 8) tags.push("试听");
+  if (song.hr || song.sq || song.privilege?.maxbr >= 999000) tags.push("超清母带");
   if (song.mv || song.mvid) tags.push("MV");
-  if (song.privilege?.flag > 0 && !tags.includes("VIP")) tags.push("鐗堟潈");
-  return [...new Set(tags.filter((tag) => tag && !/^绉佷汉闆疯揪$|^姣忔棩鎺ㄨ崘$|^绉佷汉FM$/.test(tag)))].slice(0, 3);
+  if (song.privilege?.flag > 0 && !tags.includes("VIP")) tags.push("版权");
+  return [...new Set(tags.filter((tag) => tag && !/^私人雷达$|^每日推荐$|^私人FM$/.test(tag)))].slice(0, 3);
 }
 
 function neteaseRecommendations(songs) {
@@ -1167,17 +1167,17 @@ async function readNeteaseSourceCards(extraPlaylistIds = []) {
   });
   const tasks = [];
   if (NETEASE_LIBRARY_PLAYLIST_ID) {
-    const fallbackName = NETEASE_PLAYLIST_NAMES[NETEASE_LIBRARY_PLAYLIST_ID] || "鎴戠殑鍠滄";
+    const fallbackName = NETEASE_PLAYLIST_NAMES[NETEASE_LIBRARY_PLAYLIST_ID] || "我的喜欢";
     tasks.push(readNeteasePlaylistCard(base, { id: NETEASE_LIBRARY_PLAYLIST_ID, name: fallbackName })
-      .then((item) => cardFromItem("local", "鎴戠殑鍠滄", item))
-      .catch(() => cardFromItem("local", "鎴戠殑鍠滄", null)));
+      .then((item) => cardFromItem("local", "我的喜欢", item))
+      .catch(() => cardFromItem("local", "我的喜欢", null)));
   }
   tasks.push(readNeteaseDynamicSource("daily")
-    .then((item) => cardFromItem("daily", "姣忔棩鎺ㄨ崘", item))
-    .catch(() => cardFromItem("daily", "姣忔棩鎺ㄨ崘", null)));
+    .then((item) => cardFromItem("daily", "每日推荐", item))
+    .catch(() => cardFromItem("daily", "每日推荐", null)));
   tasks.push(readNeteaseDynamicSource("personal_fm")
-    .then((item) => cardFromItem("personal_fm", "绉佷汉闆疯揪", item))
-    .catch(() => cardFromItem("personal_fm", "绉佷汉闆疯揪", null)));
+    .then((item) => cardFromItem("personal_fm", "私人雷达", item))
+    .catch(() => cardFromItem("personal_fm", "私人雷达", null)));
   const userPlaylistIds = await readUserNeteasePlaylistIds();
   const playlistIds = [...new Set([...NETEASE_IMPORTED_PLAYLIST_IDS, ...userPlaylistIds, ...extraPlaylistIds]
     .map((id) => String(id || "").trim())
@@ -1680,7 +1680,7 @@ function expandedQueryAliases(query) {
 function compactText(value) {
   return normalizeText(value)
     .replace(/[龍竜]/g, "龙")
-    .replace(/[鈥欌€榒]/g, "'")
+    .replace(/[’‘]/g, "'")
     .replace(/[\s\-_:()[\]【】《》'.,，。！？?\/\\]+/g, "");
 }
 
@@ -1691,7 +1691,7 @@ function hasJapaneseKana(value) {
 function looksJapaneseTrack(track) {
   const rawText = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`;
   return hasJapaneseKana(rawText)
-    || /j-pop|japanese|anime|鍒濋煶|鏉辨柟|鍧傛湰|绫虫触|radwimps|aimer|yoasobi|瀹囧鐢皘妞庡悕|銈儶銈搞儕銉珅銈点偊銉炽儔銉堛儵銉冦偗/i.test(rawText);
+    || /j-pop|japanese|anime|初音|东方|坂本|米津|radwimps|aimer|yoasobi|宇多田|椎名|オルゴール|サウンドトラック/i.test(rawText);
 }
 
 function looksChineseTrack(track) {
@@ -1814,8 +1814,8 @@ function looksLikeSpecificArtistRequest(prompt) {
   const styles = queryStyleFlags(prompt);
   if (Object.values(styles).some(Boolean)) return false;
   if (aliasTargetsForQuery(prompt).length) return false;
-  if (!/(鍚瑋鎾瓅鎾斁|鎵緗鎼滅储|鎼渱鏌鎺ㄨ崘)/.test(normalized)) return false;
-  if (!/(鐨勬瓕|姝屾洸|闊充箰|姝屾墜|artist)/i.test(normalized)) return false;
+  if (!/(听|播|播放|找|搜|搜索|查|推荐)/.test(normalized)) return false;
+  if (!/(的歌|歌曲|音乐|歌手|artist)/i.test(normalized)) return false;
   if (!cleaned) return false;
   return compactText(cleaned).length <= 16;
 }
@@ -1961,7 +1961,7 @@ function displayArtistRequest(prompt, recommendations, memory) {
   if (aliasTargets.length) return aliasTargets[0];
   const cleaned = cleanQuery(prompt);
   if (cleaned) return cleaned;
-  return recommendations[0]?.track?.artist || "杩欎釜姝屾墜";
+  return recommendations[0]?.track?.artist || "这个歌手";
 }
 
 function looksLikeBareArtistName(prompt) {
@@ -1998,7 +1998,7 @@ function cleanAlbumQuery(query) {
 function searchTracks(playlist, query, limit = 5) {
   const normalized = normalizeText(query);
   const cleaned = cleanQuery(query);
-  const albumMode = /涓撹緫|album/i.test(query);
+  const albumMode = /专辑|album/i.test(query);
   const effectiveQuery = albumMode ? (cleanAlbumQuery(query) || cleaned) : cleaned;
   const aliasTargets = aliasTargetsForQuery(query);
   const queryAliases = expandedQueryAliases(effectiveQuery);
@@ -2073,10 +2073,10 @@ function searchTracks(playlist, query, limit = 5) {
     for (const [hint, words] of moodHints) {
       if (normalized.includes(hint)) {
         if (words.some((word) => text.includes(word))) score += 4;
-        if (hint === "绾煶" && !/[a-z\u4e00-\u9fa5]{8,}/i.test(track.artist || "")) score += 1;
+        if (hint === "纯音" && !/[a-z\u4e00-\u9fa5]{8,}/i.test(track.artist || "")) score += 1;
       }
     }
-    if (normalized.includes("鐩存帴") || normalized.includes("鎾斁")) score += 1;
+    if (normalized.includes("直接") || normalized.includes("播放")) score += 1;
     if (styleFlags.noIntro && !looksNoIntroBlocked(track)) score += 18;
     return { index, track, score, blockedByNoIntro: styleFlags.noIntro && looksNoIntroBlocked(track) };
   })
@@ -2162,7 +2162,7 @@ function findArtistsByNameFragment(playlist, fragment, limit = 20) {
   const artists = new Map();
   for (const track of playlist.tracks || []) {
     const names = String(track.artist || "")
-      .split(/\s*(?:\/|,|&|銆亅鍜寍feat\.?|ft\.?|with)\s*/i)
+      .split(/\s*(?:\/|,|&|、|和|feat\.?|ft\.?|with)\s*/i)
       .map((name) => name.trim())
       .filter(Boolean);
     for (const name of names) {
@@ -2196,8 +2196,8 @@ function findTitleMatches(playlist, query, limit = 20) {
       if (queryCompact.includes(titleCompact) && titleCompact.length > 2) score = Math.max(score, 80);
     }
     if (score > 0) {
-      if (/鍦ｈ癁蹇箰鍔充鸡鏂厛鐢焲鍔充鸡鏂厛鐢焲merrychristmasmrlawrence/.test(compactText(query))
-        && /鍧傛湰|sakamoto|ryuichi/i.test(`${track.artist} ${track.album || ""}`)) {
+      if (/圣诞快乐劳伦斯先生|劳伦斯先生|merrychristmasmrlawrence/.test(compactText(query))
+        && /坂本|sakamoto|ryuichi/i.test(`${track.artist} ${track.album || ""}`)) {
         score += 35;
       }
       for (const token of queryTokens) {
@@ -2298,7 +2298,7 @@ function wantsLibraryList(prompt) {
 }
 
 function wantsNoAccompaniment(prompt) {
-  return /娌℃湁浼村|鏃犱即濂弢涓嶈浼村|涓嶅甫浼村|鏃犱即濂忕殑|娌′即濂弢娓呭敱|绾汉澹皘浜哄０鏃犱即濂弢a\s*cappella|acappella|vocal only/i.test(normalizeText(prompt));
+  return /没有伴奏|无伴奏|不要伴奏|不带伴奏|无伴奏的|没伴奏|清唱|纯人声|人声无伴奏|a\s*cappella|acappella|vocal only/i.test(normalizeText(prompt));
 }
 
 function toRecommendation(playlist, index, score = 0) {
@@ -2373,7 +2373,7 @@ function needsMusicClarification(prompt, matches) {
 
 function looksNoIntroBlocked(track) {
   const rawText = `${track.title} ${track.artist} ${track.album || ""} ${track.mood || ""}`;
-  return /intro|鍓嶅|instrumental|overture|prelude|opening|op\.|theme|bgm|閰嶄箰|绾煶涔恷piano|閽㈢惔|soundtrack|ost|original motion picture|original soundtrack|score|浼村|浼村鐗坾浼村甯off\s*vocal|off[\s\u00a0]*vocal|karaoke|绾韩|鏃犱汉澹皘vocal\s*off/i.test(rawText);
+  return /intro|前奏|instrumental|overture|prelude|opening|op\.|theme|bgm|配乐|纯音乐|piano|钢琴|soundtrack|ost|original motion picture|original soundtrack|score|伴奏|伴奏版|伴奏带|off\s*vocal|off[\s\u00a0]*vocal|karaoke|纯享|无人声|vocal\s*off/i.test(rawText);
 }
 
 function firstLyricTimestamp(lyric = "") {
@@ -2389,21 +2389,21 @@ function likelyVocalSongScore(track, prompt = "") {
   if (track.duration && track.duration >= 90 && track.duration <= 330) score += 12;
   if (/[\u4e00-\u9fff]/.test(`${track.title}${track.artist}`)) score += 10;
   if (/[a-z]/i.test(`${track.title}${track.artist}`) && !/soundtrack|score|ost|theme/i.test(rawText)) score += 8;
-  if (/feat\.?|ft\.?|with|鐢峰０|濂冲０|vocal|version|radio edit/i.test(rawText)) score += 5;
-  if (/live|浼村|karaoke|remix|demo|绾韩|instrumental/i.test(rawText)) score -= 16;
-  if (/鍗庤|涓枃|鍥借/.test(prompt) && looksChineseTrack(track)) score += 18;
-  if (/鑻辨枃|娆х編|鑻辫/.test(prompt) && /[a-z]/i.test(`${track.title}${track.artist}`)) score += 14;
+  if (/feat\.?|ft\.?|with|男声|女声|vocal|version|radio edit/i.test(rawText)) score += 5;
+  if (/live|伴奏|karaoke|remix|demo|纯享|instrumental/i.test(rawText)) score -= 16;
+  if (/华语|中文|国语/.test(prompt) && looksChineseTrack(track)) score += 18;
+  if (/英文|欧美|英语/.test(prompt) && /[a-z]/i.test(`${track.title}${track.artist}`)) score += 14;
   return score;
 }
 
 function findNoAccompanimentMatches(playlist, limit = 12) {
-  const strong = /a\s*cappella|acappella|娓呭敱|鏃犱即濂弢绾汉澹皘浜哄０鏃犱即濂弢vocal\s*only/i;
+  const strong = /a\s*cappella|acappella|清唱|无伴奏|纯人声|人声无伴奏|vocal\s*only/i;
   return playlist.tracks
     .map((track, index) => {
       const rawText = `${track.title} ${track.artist} ${track.album || ""} ${track.mood || ""}`;
       let score = 0;
       if (strong.test(rawText)) score += 120;
-      if (/浼村鐗坾浼村甯instrumental|karaoke|off\s*vocal|off[\s\u00a0]*vocal|acoustic|unplugged|绾煶涔恷piano|ost|soundtrack|score|bgm|orchestra/i.test(rawText)) score -= 140;
+      if (/伴奏版|伴奏带|instrumental|karaoke|off\s*vocal|off[\s\u00a0]*vocal|acoustic|unplugged|纯音乐|piano|ost|soundtrack|score|bgm|orchestra/i.test(rawText)) score -= 140;
       return { index, track, score };
     })
     .filter((item) => item.score > 0)
@@ -2768,7 +2768,7 @@ async function handleDsMusicIntent(intent, { prompt, playlist, payload, memory, 
     }
     if (!matches.length) {
       const neteaseQuery = semanticStyleQuery(prompt, intent.style || extractStyleLabel(prompt) || searchPrompt)
-        .replace(/鎺ヤ笅鏉缁х画鎾斁|鎾斁|鎴戞兂鍚瑋鎯冲惉|鎴戣鍚瑋鏉ョ偣|鎺ㄨ崘|姝屾洸|闊充箰|涓烘垜|缁欐垜/g, " ")
+        .replace(/接下来|继续播放|播放|我想听|想听|我要听|来点|推荐|歌曲|音乐|为我|给我/g, " ")
         .replace(/\s+/g, " ")
         .trim() || searchPrompt;
       const netease = await searchNeteaseSongs(neteaseQuery, 12);
@@ -2853,7 +2853,7 @@ async function dsMusicIntent(prompt, memory, payload) {
     const badTitle = String(parsed.title || "").trim();
     const badArtist = String(parsed.artist || "").trim();
     const badIntent = String(parsed.intent || "chat");
-    if (styleIntent && (badIntent === "play_title" || badIntent === "search_title") && (!badTitle || /姝屾洸|闊充箰|r&b|rnb|rb|鎯呮瓕|鎱㈡瓕|椋庢牸/i.test(badTitle))) {
+    if (styleIntent && (badIntent === "play_title" || badIntent === "search_title") && (!badTitle || /歌曲|音乐|r&b|rnb|rb|情歌|慢歌|风格/i.test(badTitle))) {
       parsed.intent = "recommend_style";
       parsed.style = semanticStyleQuery(prompt, parsed.style || styleLabel);
       parsed.title = "";
@@ -2962,7 +2962,7 @@ async function computedDesktopLyrics() {
     return {
       title: String(track.title || "Claudio AI Radio"),
       artist: String(track.artist || ""),
-      current: "鏆傛棤姝岃瘝",
+      current: "暂无歌词",
       translation: "",
       next: "",
       playing: Boolean(payload.playing)
@@ -2975,7 +2975,7 @@ async function computedDesktopLyrics() {
   return {
     title: String(track.title || "Claudio AI Radio"),
     artist: String(track.artist || ""),
-    current: String(current.text || "鏆傛棤姝岃瘝"),
+    current: String(current.text || "暂无歌词"),
     translation: String(current.translation || ""),
     next: String(lines[index + 1]?.text || ""),
     playing: Boolean(payload.playing)
@@ -3665,7 +3665,7 @@ async function handleApi(req, res, pathname) {
     return json(res, {
       source: {
         id: playlist.playlist?.id || NETEASE_LIBRARY_PLAYLIST_ID,
-        name: "鎴戠殑鍠滄",
+        name: "我的喜欢",
         cover: playlist.playlist?.cover || "",
         trackCount: tracks.length
       },
@@ -3762,8 +3762,8 @@ async function handleApi(req, res, pathname) {
     const numericId = query.match(/^\d{4,}$/);
     const songs = numericId
       ? [{
-        title: `缃戞槗浜戞瓕鏇?${query}`,
-        artist: "鐐瑰嚮鍚庤鍙栨挱鏀惧湴鍧€",
+        title: `网易云歌曲 ${query}`,
+        artist: "点击后读取播放地址",
         album: "SongID",
         cover: "",
         duration: 0,
@@ -3947,7 +3947,7 @@ async function handleApi(req, res, pathname) {
     state.weatherLocation = {
       lat: lat.toFixed(5),
       lon: lon.toFixed(5),
-      label: String(body.label || "褰撳墠浣嶇疆").slice(0, 40)
+      label: String(body.label || "当前位置").slice(0, 40)
     };
     weatherCache = null;
     await broadcast();
@@ -4099,7 +4099,7 @@ async function handleApi(req, res, pathname) {
       .map((track) => externalNeteaseTrack(track))
       .filter((track) => track.sourceId && !isBlockedForPlayback(track));
     if (!tracks.length) return json(res, { error: "empty playlist" }, 400);
-    const name = String(body.name || "杩藉姞姝屽崟").slice(0, 80);
+    const name = String(body.name || "追加歌单").slice(0, 80);
     const dedupe = (items) => {
       const seen = new Set();
       return items.filter((track) => {
@@ -4118,7 +4118,7 @@ async function handleApi(req, res, pathname) {
     } else if (state.nextSessionPlaylist?.tracks?.length) {
       state.nextSessionPlaylist = {
         ...state.nextSessionPlaylist,
-        name: `${state.nextSessionPlaylist.name || "鍚庣画姝屽崟"} + ${name}`.slice(0, 80),
+        name: `${state.nextSessionPlaylist.name || "后续歌单"} + ${name}`.slice(0, 80),
         tracks: dedupe([...(state.nextSessionPlaylist.tracks || []), ...tracks])
       };
     } else {
@@ -4646,7 +4646,7 @@ async function handleApi(req, res, pathname) {
 
     const shouldTryTitleSearch = wantsSpecificSongPlayback(prompt)
       || expandedQueryAliases(cleanQuery(prompt)).length > 0
-      || /妫€绱鎼滅储|鎼渱鏌鏌ヨ/.test(normalizeText(prompt));
+      || /检索|搜索|搜|查|查询/.test(normalizeText(prompt));
     const titleMatches = shouldTryTitleSearch ? findTitleMatches(playlist, prompt, 12) : [];
     const rememberedAliasTargets = userAliasTargetsForQuery(prompt, memory);
     const artistMatches = titleMatches.length
@@ -4780,22 +4780,22 @@ async function handleApi(req, res, pathname) {
     try {
       const generated = await aiChat(
         [{ role: "user", content: [
-          `?????${payload.track.title} / ${payload.track.artist}`,
-          `???????${playlist.tracks.length}`,
-          `???????${memory.preferences.join("?") || "??"}`,
-          `???????${memory.recentAsks.slice(0, 4).join(" / ")}`,
-          `???????????${searchPrompt}`,
-          `????????????${weather.city} ${weather.text} ${weather.temp}C`,
-          recommendationText ? `???????\n${recommendationText}` : "????????",
-          `????${prompt}`
+          `当前歌曲：${payload.track.title} / ${payload.track.artist}`,
+          `当前歌单数量：${playlist.tracks.length}`,
+          `已记住的偏好：${memory.preferences.join("、") || "暂无"}`,
+          `最近用户问过：${memory.recentAsks.slice(0, 4).join(" / ")}`,
+          `本轮用于理解的上下文：${searchPrompt}`,
+          `隐藏上下文，不要主动提：${weather.city} ${weather.text} ${weather.temp}C`,
+          recommendationText ? `你的歌单候选：\n${recommendationText}` : "你的歌单候选：无",
+          `用户说：${prompt}`
         ].join("\n") }],
         [
-          `?? ${taste.stationName} ???????????????????????????`,
-          "?????????????r&b????????????????????????????????????????",
-          "????????????????????????????",
-          "?????????????????????????????????????????????????????????????????????",
-          "??????????????????????????",
-          "????????????????????????????????????"
+          `你是 ${taste.stationName} 的电台伙伴。你可以正常聊天，也可以帮用户从歌单里找歌。`,
+          "用户常用很短的口语，比如“r&b呢”“来点纯音”“换个甜的”。你要像真正懂音乐的朋友一样接住，不要解释使用方法。",
+          "如果用户是在闲聊，就像朋友一样自然回答，不要强行推荐歌。",
+          "如果用户想听歌或搜歌，要基于“你的歌单候选”和网易云候选回答；不要让用户误以为只能搜当前歌单，语气自然，少说套话。不要说“你可以说……”。",
+          "不要主动提天气，除非用户明确问天气或要求按天气推荐。",
+          "不要使用固定模板，不要每次都说“收到”。回复尽量像一句电台聊天，短一点。"
         ].join("\n")
       );
       if (!queueNotice) reply = sanitizeStationReply(generated, fallback);
