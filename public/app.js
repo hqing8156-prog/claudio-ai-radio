@@ -2685,6 +2685,10 @@ async function handlePlayButtonClick(event) {
     currentSourceId: state?.track?.sourceId || state?.track?.id || "",
     playing: Boolean(state?.playing)
   });
+  if (state?.playing) {
+    await setPlaying(false);
+    return;
+  }
   const currentTrack = state?.track;
   if (currentTrack) {
     const currentAudioKey = audioKey(currentTrack);
@@ -2699,7 +2703,7 @@ async function handlePlayButtonClick(event) {
       await setPlaying(true);
       return;
     }
-    if (audioUnlockPending || (state?.playing && (!hasLiveAudio || isCurrentPending))) {
+    if (audioUnlockPending || (!hasLiveAudio || isCurrentPending)) {
       audioContext?.resume?.().catch(() => {});
       primeAudioPlayback().catch(() => {});
       stopSilentFallback();
@@ -3147,12 +3151,15 @@ function markCurrentTrackPlaylistMembership(playlist = {}) {
 async function loadFavoritePlaylistMenu() {
   if (!els.favoritePlaylistMenu) return;
   try {
-    const data = await api("/api/netease-favorite-playlists");
+    const songId = neteaseSongId(state?.track);
+    const query = songId ? `?songId=${encodeURIComponent(songId)}` : "";
+    const data = await api(`/api/netease-favorite-playlists${query}`);
     const playlists = data.playlists || [];
     const existingPlaylistIds = currentTrackPlaylistIds();
     els.favoritePlaylistMenu.innerHTML = playlists.length
       ? playlists.map((item) => {
-        const alreadyInPlaylist = existingPlaylistIds.has(String(item.id || "").trim());
+        const playlistId = String(item.id || "").trim();
+        const alreadyInPlaylist = Boolean(item.containsSong) || existingPlaylistIds.has(playlistId);
         return `
         <button type="button" data-playlist-id="${escapeHtml(item.id)}" data-playlist-name="${escapeHtml(item.name || item.id)}" data-playlist-cover="${escapeHtml(String(item.cover || ""))}" data-playlist-count="${escapeHtml(String(Number(item.trackCount || 0)))}" class="${alreadyInPlaylist ? "existing-member" : ""}" role="menuitem"${alreadyInPlaylist ? " disabled aria-disabled=\"true\" title=\"当前歌曲已在该歌单中\"" : ""}>
           ${item.cover ? `<img src="${escapeHtml(String(item.cover).replace(/^http:/, "https:"))}" alt="">` : ""}
