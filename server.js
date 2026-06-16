@@ -277,6 +277,13 @@ async function loadPlaybackState() {
   try {
     const saved = await readJson("playback-state.json");
     const savedSessionPlaylist = sanitizePersistedSessionPlaylist(saved.sessionPlaylist);
+    const savedNextSessionPlaylist = sanitizePersistedSessionPlaylist(saved.nextSessionPlaylist);
+    const savedNextTracks = sanitizePersistedTrackList(saved.nextTracks);
+    const savedTempTrack = sanitizePersistedTrack(saved.tempTrack);
+    const savedQueue = sanitizePersistedQueue(saved.queue);
+    const savedPlayStack = sanitizePersistedPlayStack(saved.playStack);
+    const savedPreviousPlaybackContext = sanitizePersistedPlaybackContext(saved.previousPlaybackContext);
+    const savedNextPlaybackContext = sanitizePersistedPlaybackContext(saved.nextPlaybackContext);
     const savedIndex = Number(saved.index || 0);
     const boundedIndex = savedSessionPlaylist?.tracks?.length
       ? Math.min(Math.max(0, savedIndex), savedSessionPlaylist.tracks.length - 1)
@@ -284,17 +291,17 @@ async function loadPlaybackState() {
     return {
       ...DEFAULT_PLAYBACK_STATE,
       ...saved,
-      playing: false,
+      playing: Boolean(saved.playing),
       index: Number.isFinite(boundedIndex) ? boundedIndex : DEFAULT_PLAYBACK_STATE.index,
-      queue: [],
-      nextTracks: [],
+      queue: savedQueue,
+      nextTracks: savedNextTracks,
       history: [],
-      playStack: [],
-      tempTrack: null,
+      playStack: savedPlayStack,
+      tempTrack: savedTempTrack,
       sessionPlaylist: savedSessionPlaylist,
-      nextSessionPlaylist: null,
-      previousPlaybackContext: null,
-      nextPlaybackContext: null,
+      nextSessionPlaylist: savedNextSessionPlaylist,
+      previousPlaybackContext: savedPreviousPlaybackContext,
+      nextPlaybackContext: savedNextPlaybackContext,
       positionSeconds: Math.max(0, Number(saved.positionSeconds || 0)),
       positionTrackKey: String(saved.positionTrackKey || ""),
       positionUpdatedAt: String(saved.positionUpdatedAt || ""),
@@ -320,6 +327,73 @@ function sanitizePersistedSessionPlaylist(playlist) {
   };
 }
 
+function sanitizePersistedTrack(track) {
+  const sourceId = String(track?.sourceId || track?.id || "").trim();
+  if (!sourceId) return null;
+  return externalNeteaseTrack(track);
+}
+
+function sanitizePersistedTrackList(tracks = []) {
+  const seen = new Set();
+  return filterPlaybackTracks(tracks || [])
+    .map((track) => sanitizePersistedTrack(track))
+    .filter((track) => {
+      const key = playbackTrackKey(track);
+      if (!track || !key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function sanitizePersistedQueue(queue = []) {
+  return (Array.isArray(queue) ? queue : [])
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0)
+    .slice(0, 2000);
+}
+
+function sanitizePersistedPlayStack(stack = []) {
+  return (Array.isArray(stack) ? stack : [])
+    .map((item) => {
+      const track = sanitizePersistedTrack(item?.track);
+      if (!track) return null;
+      return {
+        key: String(item?.key || "").trim().slice(0, 240),
+        index: Math.max(0, Number(item?.index || 0)),
+        source: item?.source === "temp" ? "temp" : "session",
+        sessionId: String(item?.sessionId || "").trim().slice(0, 120),
+        playlistName: String(item?.playlistName || "").trim().slice(0, 120),
+        track
+      };
+    })
+    .filter((item) => item?.track)
+    .slice(-80);
+}
+
+function sanitizePersistedPlaybackContext(context) {
+  if (!context || typeof context !== "object") return null;
+  const sessionPlaylist = sanitizePersistedSessionPlaylist(context.sessionPlaylist);
+  const nextSessionPlaylist = sanitizePersistedSessionPlaylist(context.nextSessionPlaylist);
+  const nextTracks = sanitizePersistedTrackList(context.nextTracks);
+  const tempTrack = sanitizePersistedTrack(context.tempTrack);
+  const queue = sanitizePersistedQueue(context.queue);
+  const maxIndex = sessionPlaylist?.tracks?.length ? sessionPlaylist.tracks.length - 1 : 0;
+  const index = Math.min(Math.max(0, Number(context.index || 0)), maxIndex);
+  const sanitized = {
+    at: String(context.at || "").trim().slice(0, 64),
+    reason: String(context.reason || "restore").trim().slice(0, 120),
+    index: Number.isFinite(index) ? index : 0,
+    playing: Boolean(context.playing),
+    queue,
+    nextTracks,
+    tempTrack,
+    sessionPlaylist,
+    nextSessionPlaylist,
+    playbackMode: ["sequence", "repeat-one", "shuffle"].includes(context.playbackMode) ? context.playbackMode : "sequence"
+  };
+  return hasPlaybackContext(sanitized) ? sanitized : null;
+}
+
 function persistedPlaybackStateSnapshot() {
   return {
     playing: Boolean(state.playing),
@@ -327,15 +401,15 @@ function persistedPlaybackStateSnapshot() {
     volume: state.volume,
     weatherLocation: state.weatherLocation,
     lastHostLine: "",
-    queue: [],
-    nextTracks: [],
+    queue: sanitizePersistedQueue(state.queue),
+    nextTracks: sanitizePersistedTrackList(state.nextTracks),
     history: [],
-    playStack: [],
-    tempTrack: null,
+    playStack: sanitizePersistedPlayStack(state.playStack),
+    tempTrack: sanitizePersistedTrack(state.tempTrack),
     sessionPlaylist: sanitizePersistedSessionPlaylist(state.sessionPlaylist),
-    nextSessionPlaylist: null,
-    previousPlaybackContext: null,
-    nextPlaybackContext: null,
+    nextSessionPlaylist: sanitizePersistedSessionPlaylist(state.nextSessionPlaylist),
+    previousPlaybackContext: sanitizePersistedPlaybackContext(state.previousPlaybackContext),
+    nextPlaybackContext: sanitizePersistedPlaybackContext(state.nextPlaybackContext),
     positionSeconds: Math.max(0, Number(state.positionSeconds || 0)),
     positionTrackKey: String(state.positionTrackKey || ""),
     positionUpdatedAt: state.positionUpdatedAt || "",
@@ -409,22 +483,71 @@ async function getTaste() {
   }
 }
 
+function defaultMemoryState() {
+  return {
+    chatCount: 0,
+    preferences: [],
+    recentAsks: [],
+    artistAliases: {},
+    lastRecommendations: [],
+    pendingTitle: null,
+    pendingTitleAt: null,
+    pendingArtistAlias: null,
+    pendingArtistIntent: null,
+    updatedAt: null
+  };
+}
+
+function looksLikeMojibake(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (text.includes("\uFFFD")) return true;
+  const markerPattern = /(?:\u93B4|\u6D63|\u935A|\u9422|\u9428|\u95CA|\u59E3|\u9286|\u951B|\u93C6|\u950B|\u9225|\u20AC)/g;
+  const markers = text.match(markerPattern) || [];
+  return markers.length >= 2;
+}
+
+function sanitizeTextList(values = [], limit = 20) {
+  return (Array.isArray(values) ? values : [])
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && !looksLikeMojibake(item))
+    .slice(0, limit);
+}
+
+function sanitizeArtistAliases(aliases = {}) {
+  return Object.fromEntries(
+    Object.entries(aliases || {})
+      .map(([alias, target]) => [String(alias || "").trim(), String(target || "").trim()])
+      .filter(([alias, target]) => alias && target && !looksLikeMojibake(alias) && !looksLikeMojibake(target))
+      .slice(0, 40)
+  );
+}
+
+function sanitizeMemory(memory = {}) {
+  return {
+    ...defaultMemoryState(),
+    ...memory,
+    chatCount: Math.max(0, Number(memory.chatCount || 0)),
+    preferences: sanitizeTextList(memory.preferences, 20),
+    recentAsks: sanitizeTextList(memory.recentAsks, 8),
+    artistAliases: sanitizeArtistAliases(memory.artistAliases),
+    lastRecommendations: (Array.isArray(memory.lastRecommendations) ? memory.lastRecommendations : [])
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 0)
+      .slice(0, 40),
+    lastRecommendationTitles: sanitizeTextList(memory.lastRecommendationTitles, 40),
+    pendingTitle: looksLikeMojibake(memory.pendingTitle) ? null : String(memory.pendingTitle || "").trim().slice(0, 120) || null,
+    pendingArtistAlias: looksLikeMojibake(memory.pendingArtistAlias) ? null : String(memory.pendingArtistAlias || "").trim().slice(0, 120) || null,
+    pendingArtistIntent: ["search", "play"].includes(memory.pendingArtistIntent) ? memory.pendingArtistIntent : null,
+    updatedAt: memory.updatedAt || null
+  };
+}
+
 async function getMemory() {
   try {
-    return await readJson("memory.json");
+    return sanitizeMemory(await readJson("memory.json"));
   } catch {
-    return {
-      chatCount: 0,
-      preferences: [],
-      recentAsks: [],
-      artistAliases: {},
-      lastRecommendations: [],
-      pendingTitle: null,
-      pendingTitleAt: null,
-      pendingArtistAlias: null,
-      pendingArtistIntent: null,
-      updatedAt: null
-    };
+    return defaultMemoryState();
   }
 }
 
@@ -432,29 +555,29 @@ async function rememberChat(prompt) {
   const memory = await getMemory();
   const text = normalizeText(prompt);
   const hints = [
-    ["r&b", /r&b|rnb|rb|soul|布鲁斯/i],
-    ["emo", /emo|伤感|丧/i],
-    ["纯音/OST", /纯音|ost|bgm|原声|配乐|前奏/i],
-    ["写代码", /coding|工作|专注|写代码/i],
-    ["夜晚慢歌", /夜晚|晚上|深夜|慢|放松/i],
-    ["中文歌", /中文|国语|华语/i],
-    ["英文歌", /英文|英语|欧美|外文|english|western/i],
-    ["散步", /散步|走路|步行|walk/i],
-    ["暧昧暖歌", /暧昧|温柔|心动|甜/i],
-    ["日语歌", /日语|日文|jpop|j-pop|动漫/i]
+    ["r&b", /r&b|rnb|rb|soul/i],
+    ["emo", /emo|\u4F24\u611F|\u4E27/i],
+    ["\u7EAF\u97F3\/OST", /\u7EAF\u97F3|ost|bgm|\u539F\u58F0|\u914D\u4E50|\u524D\u594F/i],
+    ["\u5199\u4EE3\u7801", /coding|\u5DE5\u4F5C|\u4E13\u6CE8|\u5199\u4EE3\u7801/i],
+    ["\u591C\u665A\u6162\u6B4C", /\u591C\u665A|\u665A\u4E0A|\u6DF1\u591C|\u6162\u6B4C|\u653E\u677E/i],
+    ["\u4E2D\u6587\u6B4C", /\u4E2D\u6587|\u56FD\u8BED|\u534E\u8BED/i],
+    ["\u82F1\u6587\u6B4C", /\u82F1\u6587|\u82F1\u8BED|\u6B27\u7F8E|\u5916\u6587|english|western/i],
+    ["\u6563\u6B65", /\u6563\u6B65|\u8D70\u8DEF|\u6B65\u884C|walk/i],
+    ["\u66A7\u6627\u6696\u6B4C", /\u66A7\u6627|\u6E29\u67D4|\u5FC3\u52A8|\u751C/i],
+    ["\u65E5\u8BED\u6B4C", /\u65E5\u8BED|\u65E5\u6587|jpop|j-pop|\u52A8\u6F2B/i]
   ];
   for (const [label, pattern] of hints) {
-    if (pattern.test(text) && !memory.preferences.includes(label)) {
-      memory.preferences.push(label);
-    }
+    if (pattern.test(text) && !memory.preferences.includes(label)) memory.preferences.push(label);
   }
+  const cleanPrompt = String(prompt || "").trim();
   memory.chatCount += 1;
-  memory.recentAsks = [prompt, ...memory.recentAsks.filter((item) => item !== prompt)].slice(0, 8);
+  memory.recentAsks = [cleanPrompt, ...memory.recentAsks.filter((item) => item !== cleanPrompt)].filter(Boolean).slice(0, 8);
   memory.artistAliases ||= {};
   memory.lastRecommendations ||= [];
   memory.updatedAt = new Date().toISOString();
-  await writeJson("memory.json", memory);
-  return memory;
+  const sanitized = sanitizeMemory(memory);
+  await writeJson("memory.json", sanitized);
+  return sanitized;
 }
 
 async function rememberRecommendations(memory, recommendations) {
@@ -3519,7 +3642,8 @@ async function currentPayload() {
   const hasTracks = activePlaylist.tracks.length > 0;
   const activeIndex = hasTracks ? state.index % activePlaylist.tracks.length : 0;
   const track = state.tempTrack || (hasTracks ? activePlaylist.tracks[activeIndex] : EMPTY_TRACK);
-  const nextTrack = state.nextTracks?.[0] || (hasTracks ? activePlaylist.tracks[(activeIndex + 1) % activePlaylist.tracks.length] : null);
+  const firstNextTrack = state.nextTracks?.find((item) => playbackTrackKey(item) !== playbackTrackKey(track)) || null;
+  const nextTrack = firstNextTrack || (hasTracks ? activePlaylist.tracks[(activeIndex + 1) % activePlaylist.tracks.length] : null);
   const currentPositionKey = positionTrackKey(track);
   const positionSeconds = state.positionTrackKey === currentPositionKey
     ? Math.max(0, Math.min(Number(track.duration || Infinity), Number(state.positionSeconds || 0)))
@@ -3726,31 +3850,24 @@ async function playbackSequence(limit = 600) {
   const activePlaylist = activePlaybackPlaylist(playlist);
   const current = activePlaybackPointer(playlist);
   const currentKey = current.track ? playbackTrackKey(current.track) : "";
-  const currentLabel = current.source === "temp" ? "Chat 插播" : "正在播放";
+  const currentLabel = current.source === "temp" ? "Chat \u63d2\u64ad" : "\u6b63\u5728\u64ad\u653e";
   const items = current.track ? [{ ...trackSequenceItem(current.track, current.index, "current"), label: currentLabel }] : [];
   const seenKeys = new Set();
-  let allowCurrentDuplicateFromNext = current.source === "temp" && Boolean(currentKey);
   const pushUnique = (item, key) => {
     if (!item || !key) return;
-    if (key === currentKey && allowCurrentDuplicateFromNext) {
-      allowCurrentDuplicateFromNext = false;
-      seenKeys.add(key);
-      items.push(item);
-      return;
-    }
     if (seenKeys.has(key) || key === currentKey) return;
     seenKeys.add(key);
     items.push(item);
   };
   for (const track of filterPlaybackTracks(state.nextTracks || [])) {
-    pushUnique({ ...trackSequenceItem(track, -1, "next"), label: "下一首播放" }, playbackTrackKey(track));
+    pushUnique({ ...trackSequenceItem(track, -1, "next"), label: "\u4e0b\u4e00\u9996\u64ad\u653e" }, playbackTrackKey(track));
   }
   for (const index of state.queue || []) {
     const track = activePlaylist.tracks[Number(index)];
-    if (track) pushUnique({ ...trackSequenceItem(track, Number(index), "queue"), label: "Chat 队列" }, playbackTrackKey(track));
+    if (track) pushUnique({ ...trackSequenceItem(track, Number(index), "queue"), label: "\u64ad\u653e\u961f\u5217" }, playbackTrackKey(track));
   }
   for (const track of filterPlaybackTracks(state.nextSessionPlaylist?.tracks || [])) {
-    pushUnique({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "Chat 队列" }, playbackTrackKey(track));
+    pushUnique({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "\u64ad\u653e\u961f\u5217" }, playbackTrackKey(track));
   }
   if (activePlaylist.tracks.length) {
     const start = (current.index + 1) % activePlaylist.tracks.length;
@@ -3758,7 +3875,7 @@ async function playbackSequence(limit = 600) {
       const index = (start + offset) % activePlaylist.tracks.length;
       const track = activePlaylist.tracks[index];
       pushUnique(
-        { ...trackSequenceItem(track, index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "播放列表" },
+        { ...trackSequenceItem(track, index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "\u64ad\u653e\u5217\u8868" },
         playbackTrackKey(track)
       );
       if (items.length >= limit + 1) break;
@@ -4342,7 +4459,8 @@ async function handleApi(req, res, pathname) {
       .map((track) => externalNeteaseTrack(track))
       .filter((track) => track.sourceId && !isBlockedForPlayback(track));
     if (!tracks.length) return json(res, { error: "empty playlist" }, 400);
-    rememberPlaybackContext(`append-batch:${String(body.name || "追加歌单").slice(0, 80)}`);
+    const appendBatchName = String(body.name || "\u8ffd\u52a0\u6b4c\u5355").slice(0, 80);
+    rememberPlaybackContext(`append-batch:${appendBatchName}`);
     const dedupe = (items) => {
       const seen = new Set();
       return items.filter((track) => {
