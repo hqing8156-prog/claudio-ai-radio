@@ -1723,6 +1723,10 @@ function ensureAlbumReflection() {
 }
 
 function updateAlbumReflection() {
+  if (document.body.classList.contains("immersive-lyrics-open")) {
+    if (albumReflection) albumReflection.classList.remove("visible");
+    return;
+  }
   if (!els.cover || !els.artist || !els.coverArt) return;
   const reflection = ensureAlbumReflection();
   const image = reflection.querySelector("img");
@@ -1747,6 +1751,10 @@ function updateAlbumReflection() {
 }
 
 function scheduleAlbumReflection() {
+  if (document.body.classList.contains("immersive-lyrics-open")) {
+    if (albumReflection) albumReflection.classList.remove("visible");
+    return;
+  }
   requestAnimationFrame(() => {
     updateAlbumReflection();
     requestAnimationFrame(updateAlbumReflection);
@@ -2155,6 +2163,7 @@ async function setPlaying(playing) {
   const positionSeconds = currentElapsed();
   const currentTrack = state?.track;
   const currentTrackKey = currentTrack ? playbackPositionKey(currentTrack) : "";
+  const previousPlaying = Boolean(state?.playing);
   if (playing) {
     audioContext ||= new AudioContext();
     startedAt = Date.now();
@@ -2162,36 +2171,59 @@ async function setPlaying(playing) {
     elapsedBeforePause = positionSeconds;
     if (audio) audio.pause();
   }
-  const payload = await api("/api/state", {
-    method: "POST",
-    body: JSON.stringify({
-      playing,
-      positionSeconds,
-      positionTrackKey: currentTrackKey
-    })
-  });
-  paint(payload);
-  if (!playing || !currentTrack) return;
-  audioContext?.resume?.().catch(() => {});
-  primeAudioPlayback().catch(() => {});
-  const currentAudioKey = audioKey(currentTrack);
-  const canResumeCurrentAudio = Boolean(
-    audio &&
-    audio.paused &&
-    (audio.currentSrc || audio.src) &&
-    activeSoundKey === currentAudioKey
-  );
-  if (canResumeCurrentAudio) {
-    audio.play().then(() => {
-      audioUnlockPending = false;
-    }).catch((error) => {
-      if (isAutoplayBlocked(error)) markAudioUnlockPending();
-      else startAudio(currentTrack);
+  state = {
+    ...state,
+    playing
+  };
+  paint(state);
+  if (playing && currentTrack) {
+    audioContext?.resume?.().catch(() => {});
+    primeAudioPlayback().catch(() => {});
+    const currentAudioKey = audioKey(currentTrack);
+    const canResumeCurrentAudio = Boolean(
+      audio &&
+      audio.paused &&
+      (audio.currentSrc || audio.src) &&
+      activeSoundKey === currentAudioKey
+    );
+    if (canResumeCurrentAudio) {
+      audio.play().then(() => {
+        audioUnlockPending = false;
+      }).catch((error) => {
+        if (isAutoplayBlocked(error)) markAudioUnlockPending();
+        else startAudio(currentTrack);
+      });
+    } else if (currentTrack.sourceId || currentTrack.id || currentTrack.url) {
+      startAudio(currentTrack);
+    } else {
+      startTone(currentTrack);
+    }
+  }
+  try {
+    const payload = await api("/api/state", {
+      method: "POST",
+      body: JSON.stringify({
+        playing,
+        positionSeconds,
+        positionTrackKey: currentTrackKey
+      })
     });
-  } else if (currentTrack.sourceId || currentTrack.id || currentTrack.url) {
-    startAudio(currentTrack);
-  } else {
-    startTone(currentTrack);
+    paint(payload);
+  } catch (error) {
+    state = {
+      ...state,
+      playing: previousPlaying
+    };
+    paint(state);
+    if (playing && currentTrack && previousPlaying) {
+      if (audio) audio.pause();
+    } else if (playing && !previousPlaying) {
+      stopSound();
+    } else if (!playing && currentTrack && previousPlaying) {
+      startAudio(currentTrack);
+    }
+    showTransientStatus(playing ? "播放失败" : "暂停失败");
+    throw error;
   }
 }
 
@@ -2257,19 +2289,15 @@ async function nextTrack(reason = "manual") {
   try {
     const payload = await api("/api/next");
     payload.playing = true;
-    await api("/api/state", {
-      method: "POST",
-      body: JSON.stringify({ playing: true })
-    });
     paint(payload, { announce: true });
-    await refreshPlaybackSequenceViews();
+    refreshPlaybackSequenceViews().catch(() => {});
     if (payload.playbackMode === "repeat-one" && previousKey && previousKey === trackKey(payload.track)) {
       restartCurrentTrack(payload.track);
     }
   } finally {
     window.setTimeout(() => {
       nextInFlight = false;
-    }, 650);
+    }, 180);
   }
 }
 
@@ -2282,19 +2310,15 @@ async function previousTrack() {
   try {
     const payload = await api("/api/previous");
     payload.playing = true;
-    await api("/api/state", {
-      method: "POST",
-      body: JSON.stringify({ playing: true })
-    });
     paint(payload, { announce: true });
-    await refreshPlaybackSequenceViews();
+    refreshPlaybackSequenceViews().catch(() => {});
     if (payload.playbackMode === "repeat-one" && previousKey && previousKey === trackKey(payload.track)) {
       restartCurrentTrack(payload.track);
     }
   } finally {
     window.setTimeout(() => {
       nextInFlight = false;
-    }, 650);
+    }, 180);
   }
 }
 
@@ -2653,7 +2677,10 @@ function openPanel(id) {
   if (id === "profile") {
     if (state?.track) loadLyrics(state.track, { force: true });
     scheduleAlbumReflection();
+    scheduleCoverReflectionLayer();
     window.requestAnimationFrame(() => syncLyricsToPlayback({ force: true, behavior: "auto" }));
+  } else {
+    scheduleCoverReflectionLayer();
   }
 }
 
@@ -3362,7 +3389,7 @@ async function appendCurrentSongidBatch() {
     })
   });
   paint(payload);
-  showTransientStatus("已追加到后续播放");
+  showTransientStatus("已插入到当前歌曲后方");
   await refreshPlaybackSequenceViews();
   toggleSongidActionMenu(false);
 }

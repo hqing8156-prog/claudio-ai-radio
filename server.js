@@ -571,20 +571,27 @@ async function playTitleImmediately(title, playlist, memory) {
   const cleanTitle = String(title || "").trim();
   if (!cleanTitle) return null;
   const activePlaylist = activePlaybackPlaylist(playlist);
+  const removeFromNextTracks = (track) => {
+    const targetKey = playbackTrackKey(track);
+    state.nextTracks = filterPlaybackTracks(state.nextTracks || [])
+      .filter((item) => playbackTrackKey(item) !== targetKey);
+  };
   const localMatches = findTitleMatches(activePlaylist, cleanTitle, 8);
   if (localMatches.length) {
     const first = localMatches[0];
-    state.tempTrack = null;
-    state.index = first.index;
+    const selectedTrack = activePlaylist.tracks[first.index];
+    pushCurrentIfChanging(playlist, selectedTrack);
+    removeFromNextTracks(selectedTrack);
+    state.tempTrack = selectedTrack;
     state.playing = true;
     state.lastHostLine = "";
-    state.queue = [];
-    fillHostLineAsync(state.index);
+    resetPlaybackPosition(selectedTrack);
+    fillTempHostLineAsync(selectedTrack);
     await rememberRecommendations(memory, localMatches);
     await clearPendingTitle(memory);
     await broadcast();
     return {
-      reply: `已直接播放《${activePlaylist.tracks[first.index].title}》。`,
+      reply: `已插入下一首并立即播放《${selectedTrack.title}》，原播放序列保持不变。`,
       recommendations: localMatches.map(recommendationFromMatch),
       queued: false,
       queuePreview: [],
@@ -595,17 +602,17 @@ async function playTitleImmediately(title, playlist, memory) {
   const tracks = netease.map((track) => externalNeteaseTrack(track)).filter((track) => track.sourceId);
   if (tracks.length) {
     const [first] = tracks;
-    state.sessionPlaylist = null;
-    state.nextSessionPlaylist = null;
+    pushCurrentIfChanging(playlist, first);
+    removeFromNextTracks(first);
     state.tempTrack = first;
-    state.nextTracks = [];
     state.playing = true;
     state.lastHostLine = "";
+    resetPlaybackPosition(first);
     fillTempHostLineAsync(first);
     await clearPendingTitle(memory);
     await broadcast();
     return {
-      reply: `已直接播放网易云搜索到的《${first.title}》。`,
+      reply: `已插入下一首并立即播放网易云搜索到的《${first.title}》，原播放序列保持不变。`,
       recommendations: neteaseRecommendations(netease),
       queued: false,
       queuePreview: [],
@@ -3721,7 +3728,7 @@ async function playbackSequence(limit = 600) {
     const start = (current.index + 1) % activePlaylist.tracks.length;
     for (let offset = 0; offset < Math.min(limit, activePlaylist.tracks.length - 1); offset += 1) {
       const index = (start + offset) % activePlaylist.tracks.length;
-      items.push({ ...trackSequenceItem(activePlaylist.tracks[index], index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "鎾斁鍒楄〃" });
+      items.push({ ...trackSequenceItem(activePlaylist.tracks[index], index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "播放列表" });
     }
   }
   return {
@@ -4295,7 +4302,7 @@ async function handleApi(req, res, pathname) {
       .map((track) => externalNeteaseTrack(track))
       .filter((track) => track.sourceId && !isBlockedForPlayback(track));
     if (!tracks.length) return json(res, { error: "empty playlist" }, 400);
-    const name = String(body.name || "追加歌单").slice(0, 80);
+    rememberPlaybackContext(`append-batch:${String(body.name || "追加歌单").slice(0, 80)}`);
     const dedupe = (items) => {
       const seen = new Set();
       return items.filter((track) => {
@@ -4305,25 +4312,10 @@ async function handleApi(req, res, pathname) {
         return true;
       });
     };
-    if (state.sessionPlaylist?.tracks?.length) {
-      state.sessionPlaylist = {
-        ...state.sessionPlaylist,
-        name: `${state.sessionPlaylist.name || "NetEase Queue"} + ${name}`.slice(0, 80),
-        tracks: dedupe([...(state.sessionPlaylist.tracks || []), ...tracks])
-      };
-    } else if (state.nextSessionPlaylist?.tracks?.length) {
-      state.nextSessionPlaylist = {
-        ...state.nextSessionPlaylist,
-        name: `${state.nextSessionPlaylist.name || "后续歌单"} + ${name}`.slice(0, 80),
-        tracks: dedupe([...(state.nextSessionPlaylist.tracks || []), ...tracks])
-      };
-    } else {
-      state.nextSessionPlaylist = {
-        id: `append-${Date.now()}`,
-        name,
-        tracks
-      };
-    }
+    state.nextTracks = dedupe([
+      ...tracks,
+      ...filterPlaybackTracks(state.nextTracks || [])
+    ]);
     await broadcast();
     return json(res, await currentPayload());
   }
