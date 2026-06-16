@@ -9,7 +9,7 @@
     <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
     <meta property="og:type" content="website">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="stylesheet" href="/styles.css?v=325">
+    <link rel="stylesheet" href="/styles.css?v=352">
     <title>Claudio AI Radio</title>
   </head>
   <body>
@@ -60,7 +60,18 @@
         <div class="progress">
           <span id="elapsed">0:00</span>
           <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
-          <span id="duration">0:00</span>
+          <div class="progress-end">
+            <span id="duration">0:00</span>
+            <div class="volume-control">
+              <button id="volumeBtn" type="button" class="volume-button" aria-label="音量" title="音量">🔊</button>
+              <div id="volumeMenu" class="volume-menu hidden" role="dialog" aria-label="调节音量">
+                <div class="volume-slider-wrap">
+                  <input id="volumeRange" type="range" min="0" max="100" value="72" aria-label="音量大小">
+                </div>
+                <span id="volumeValue">72%</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <nav class="tabs" aria-label="Views">
@@ -229,6 +240,6 @@
         </form>
       </section>
     </main>
-    <script src="/app.js?v=325" type="module"></script>
+    <script src="/app.js?v=341" type="module"></script>
   </body>
 </html>
