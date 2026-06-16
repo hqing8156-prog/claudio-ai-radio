@@ -9,7 +9,7 @@
     <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
     <meta property="og:type" content="website">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="stylesheet" href="/styles.css?v=324">
+    <link rel="stylesheet" href="/styles.css?v=325">
     <title>Claudio AI Radio</title>
   </head>
   <body>
@@ -41,14 +41,14 @@
 
         <div class="controls">
           <div class="controls-row controls-row-primary">
-            <button id="prevBtn" class="icon-button" aria-label="上一首播放" title="上一首播放">‹</button>
-            <button id="playBtn" class="play" aria-label="播放/暂停" title="播放/暂停">▶</button>
-            <button id="nextBtn" class="icon-button" aria-label="下一首播放" title="下一首播放">›</button>
+            <button id="prevBtn" class="icon-button" aria-label="上一首播放" title="上一首播放">◀</button>
+            <button id="playBtn" class="play" aria-label="播放或暂停" title="播放或暂停">▶</button>
+            <button id="nextBtn" class="icon-button" aria-label="下一首播放" title="下一首播放">▶</button>
           </div>
           <div class="controls-row controls-row-tools">
             <button id="favoritePlaylistBtn" class="favorite-playlist-button" aria-label="添加到自定义歌单" title="添加到自定义歌单">+</button>
             <div id="favoritePlaylistMenu" class="favorite-playlist-menu hidden" role="menu"></div>
-            <button id="modeBtn" class="mode-button" aria-label="切换播放方式" title="切换播放方式">↻</button>
+            <button id="modeBtn" class="mode-button" aria-label="切换播放方式" title="切换播放方式">→</button>
             <button id="qualityBtn" class="quality-button" aria-label="音质" title="音质">SQ</button>
             <div id="qualityMenu" class="quality-menu hidden" role="menu" aria-label="选择音质"></div>
             <button id="likeBtn" class="like-current" aria-label="红心当前歌曲" title="红心到网易云">♡</button>
@@ -170,7 +170,7 @@
             <button type="button" id="songidSourceAdd" class="songid-source-add" aria-label="导入网易云歌单">+</button>
           </div>
           <form class="songid-search" id="songidSearch">
-            <input id="songidInput" autocomplete="off" placeholder="想听什么歌？也可以粘贴网易云歌曲ID">
+            <input id="songidInput" autocomplete="off" placeholder="想听什么歌？也可以粘贴网易云歌曲 ID">
             <button type="submit">搜索</button>
           </form>
           <form id="songidSourceImport" class="songid-source-import hidden">
@@ -202,7 +202,7 @@
                 <button type="button" id="songidPlayAll" disabled>播放全部</button>
                 <button type="button" id="songidAppendAll" disabled>追加播放</button>
                 <button type="button" id="songidEditIntro">编辑简介</button>
-                <button type="button" id="songidActionMenuBtn" class="songid-action-menu-button" aria-label="选择播放方式" aria-expanded="false" disabled>▾</button>
+                <button type="button" id="songidActionMenuBtn" class="songid-action-menu-button" aria-label="选择播放方式" aria-expanded="false" disabled>▼</button>
                 <div id="songidActionMenu" class="songid-action-menu hidden" role="menu">
                   <button type="button" data-action="append" role="menuitem">追加播放</button>
                 </div>
@@ -228,8 +228,7 @@
           <button type="submit">发送</button>
         </form>
       </section>
-
     </main>
-    <script src="/app.js?v=324" type="module"></script>
+    <script src="/app.js?v=325" type="module"></script>
   </body>
 </html>

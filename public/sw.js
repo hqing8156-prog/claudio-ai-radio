@@ -1,5 +1,5 @@
-const CACHE = "claudio-radio-v324";
-const ASSETS = ["/", "/index.html", "/styles.css?v=324", "/app.js?v=324", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "claudio-radio-v325";
+const ASSETS = ["/", "/index.html", "/styles.css?v=325", "/app.js?v=325", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

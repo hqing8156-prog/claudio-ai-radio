@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-chat-sync-reflection-v324";
+const APP_VERSION = "2026-06-16-queue-sync-utf8-v325";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
@@ -276,22 +276,25 @@ async function deleteHomeTask(id) {
 async function loadPlaybackState() {
   try {
     const saved = await readJson("playback-state.json");
+    const savedSessionPlaylist = sanitizePersistedSessionPlaylist(saved.sessionPlaylist);
+    const savedIndex = Number(saved.index || 0);
+    const boundedIndex = savedSessionPlaylist?.tracks?.length
+      ? Math.min(Math.max(0, savedIndex), savedSessionPlaylist.tracks.length - 1)
+      : savedIndex;
     return {
       ...DEFAULT_PLAYBACK_STATE,
       ...saved,
       playing: false,
-      queue: Array.isArray(saved.queue) ? saved.queue : [],
-      nextTracks: Array.isArray(saved.nextTracks) ? saved.nextTracks : [],
-      history: Array.isArray(saved.history) ? saved.history : [],
-      playStack: Array.isArray(saved.playStack) ? saved.playStack : [],
-      sessionPlaylist: saved.sessionPlaylist?.tracks?.length ? saved.sessionPlaylist : null,
-      nextSessionPlaylist: saved.nextSessionPlaylist?.tracks?.length ? saved.nextSessionPlaylist : null,
-      previousPlaybackContext: hasPlaybackContext(saved.previousPlaybackContext)
-        ? saved.previousPlaybackContext
-        : null,
-      nextPlaybackContext: hasPlaybackContext(saved.nextPlaybackContext)
-        ? saved.nextPlaybackContext
-        : null,
+      index: Number.isFinite(boundedIndex) ? boundedIndex : DEFAULT_PLAYBACK_STATE.index,
+      queue: [],
+      nextTracks: [],
+      history: [],
+      playStack: [],
+      tempTrack: null,
+      sessionPlaylist: savedSessionPlaylist,
+      nextSessionPlaylist: null,
+      previousPlaybackContext: null,
+      nextPlaybackContext: null,
       positionSeconds: Math.max(0, Number(saved.positionSeconds || 0)),
       positionTrackKey: String(saved.positionTrackKey || ""),
       positionUpdatedAt: String(saved.positionUpdatedAt || ""),
@@ -307,28 +310,42 @@ async function loadPlaybackState() {
   }
 }
 
-async function savePlaybackState() {
-  await writeJson("playback-state.json", {
-    playing: state.playing,
-    index: state.index,
+function sanitizePersistedSessionPlaylist(playlist) {
+  const tracks = filterPlaybackTracks(playlist?.tracks || []);
+  if (!tracks.length) return null;
+  return {
+    id: String(playlist?.id || "netease-session"),
+    name: String(playlist?.name || "NetEase Queue").slice(0, 80),
+    tracks: tracks.map((track) => externalNeteaseTrack(track)).filter((track) => track.sourceId)
+  };
+}
+
+function persistedPlaybackStateSnapshot() {
+  return {
+    playing: Boolean(state.playing),
+    index: Math.max(0, Number(state.index || 0)),
     volume: state.volume,
     weatherLocation: state.weatherLocation,
-    lastHostLine: state.lastHostLine,
-    queue: state.queue || [],
-    nextTracks: state.nextTracks || [],
-    history: state.history || [],
-    playStack: state.playStack || [],
-      tempTrack: state.tempTrack || null,
-      sessionPlaylist: state.sessionPlaylist || null,
-      nextSessionPlaylist: state.nextSessionPlaylist || null,
-      previousPlaybackContext: state.previousPlaybackContext || null,
-      nextPlaybackContext: state.nextPlaybackContext || null,
-      positionSeconds: Math.max(0, Number(state.positionSeconds || 0)),
-      positionTrackKey: String(state.positionTrackKey || ""),
-      positionUpdatedAt: state.positionUpdatedAt || "",
-      playbackMode: state.playbackMode || "sequence",
-      audioQuality: AUDIO_QUALITY_LEVELS.has(state.audioQuality) ? state.audioQuality : DEFAULT_AUDIO_QUALITY
-  });
+    lastHostLine: "",
+    queue: [],
+    nextTracks: [],
+    history: [],
+    playStack: [],
+    tempTrack: null,
+    sessionPlaylist: sanitizePersistedSessionPlaylist(state.sessionPlaylist),
+    nextSessionPlaylist: null,
+    previousPlaybackContext: null,
+    nextPlaybackContext: null,
+    positionSeconds: Math.max(0, Number(state.positionSeconds || 0)),
+    positionTrackKey: String(state.positionTrackKey || ""),
+    positionUpdatedAt: state.positionUpdatedAt || "",
+    playbackMode: state.playbackMode || "sequence",
+    audioQuality: AUDIO_QUALITY_LEVELS.has(state.audioQuality) ? state.audioQuality : DEFAULT_AUDIO_QUALITY
+  };
+}
+
+async function savePlaybackState() {
+  await writeJson("playback-state.json", persistedPlaybackStateSnapshot());
 }
 
 state = await loadPlaybackState();
@@ -576,12 +593,16 @@ async function playTitleImmediately(title, playlist, memory) {
     state.nextTracks = filterPlaybackTracks(state.nextTracks || [])
       .filter((item) => playbackTrackKey(item) !== targetKey);
   };
+  const insertAsImmediateNext = (track) => {
+    removeFromNextTracks(track);
+    state.nextTracks = [track, ...filterPlaybackTracks(state.nextTracks || [])];
+  };
   const localMatches = findTitleMatches(activePlaylist, cleanTitle, 8);
   if (localMatches.length) {
     const first = localMatches[0];
     const selectedTrack = activePlaylist.tracks[first.index];
     pushCurrentIfChanging(playlist, selectedTrack);
-    removeFromNextTracks(selectedTrack);
+    insertAsImmediateNext(selectedTrack);
     state.tempTrack = selectedTrack;
     state.playing = true;
     state.lastHostLine = "";
@@ -603,7 +624,7 @@ async function playTitleImmediately(title, playlist, memory) {
   if (tracks.length) {
     const [first] = tracks;
     pushCurrentIfChanging(playlist, first);
-    removeFromNextTracks(first);
+    insertAsImmediateNext(first);
     state.tempTrack = first;
     state.playing = true;
     state.lastHostLine = "";
@@ -627,6 +648,57 @@ async function playTitleImmediately(title, playlist, memory) {
     queuePreview: [],
     memory
   };
+}
+
+async function presentTitleChoices(title, playlist, memory) {
+  const cleanTitle = String(title || "").trim();
+  if (!cleanTitle) {
+    return {
+      reply: "你直接说歌名、歌手或者风格就行，我先把候选列出来，再由你自己决定加哪首。",
+      recommendations: [],
+      queued: false,
+      queuePreview: [],
+      memory
+    };
+  }
+  await rememberPendingTitle(memory, cleanTitle);
+  const netease = await searchNeteaseSongs(cleanTitle, 12);
+  if (netease.length) {
+    return {
+      reply: `我先把《${cleanTitle}》的候选列出来。你自己选单首加入当前队列，或者直接点追加全部。`,
+      recommendations: neteaseRecommendations(netease),
+      queued: false,
+      queuePreview: [],
+      memory
+    };
+  }
+  const activePlaylist = activePlaybackPlaylist(playlist);
+  const localMatches = findTitleMatches(activePlaylist, cleanTitle, 12);
+  if (localMatches.length) {
+    await rememberRecommendations(memory, localMatches);
+    return {
+      reply: `网易云这边暂时没先抓到《${cleanTitle}》的稳定结果，我把当前列表里最接近的候选列出来了。你自己选单首加入当前队列，或者直接点追加全部。`,
+      recommendations: localMatches.map(recommendationFromMatch),
+      queued: false,
+      queuePreview: [],
+      memory
+    };
+  }
+  return {
+    reply: `我按《${cleanTitle}》查了网易云和当前列表，暂时没找到可用候选。`,
+    recommendations: [],
+    queued: false,
+    queuePreview: [],
+    memory
+  };
+}
+
+function normalizeChatIntentForSelection(intent = {}) {
+  const next = { ...intent, autoplay: false };
+  if (next.intent === "play_title") next.intent = "search_title";
+  if (next.intent === "play_artist") next.intent = "search_artist";
+  if (next.intent === "play_current_artist") next.intent = "search_current_artist";
+  return next;
 }
 
 function dayPart() {
@@ -2055,29 +2127,21 @@ function extractRequestedArtistName(prompt) {
 async function handleRequestedArtistPlayback(prompt, playlist, memory) {
   const artist = extractRequestedArtistName(prompt);
   if (!artist) return null;
-  const currentIndex = state.index % playlist.tracks.length;
-  const matches = findArtistMatches(playlist, `我想听${artist}的歌`, memory);
+  const matches = findArtistMatches(playlist, `\u6211\u60f3\u542c${artist}\u7684\u6b4c`, memory);
   await rememberRecommendations(memory, matches);
-  const shouldQueue = wantsChatAutoplay(prompt);
-  const queuedIndexes = shouldQueue
-    ? matches.map((item) => item.index).filter((index) => index !== currentIndex)
-    : [];
-  if (queuedIndexes.length) state.queue = queuedIndexes;
   if (matches.length) {
     return {
-      reply: queuedIndexes.length
-        ? `找到 ${matches.length} 首 ${artist}，已排到当前歌曲后面。`
-        : `你的歌单里找到 ${matches.length} 首 ${artist}，可以从下面点播。`,
+      reply: `\u627e\u5230 ${matches.length} \u9996 ${artist}\uff0c\u5148\u653e\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\uff1b\u70b9\u5355\u9996\u4f1a\u63d2\u5230\u5f53\u524d\u6b4c\u66f2\u540e\u9762\uff0c\u70b9\u201c\u8ffd\u52a0\u5168\u90e8\u201d\u4f1a\u6574\u6279\u63d2\u5165\u5f53\u524d\u961f\u5217\u3002`,
       recommendations: matches.slice(0, 12).map(recommendationFromMatch),
-      queued: queuedIndexes.length > 0,
-      queuePreview: queuePreviewFromIndexes(playlist, queuedIndexes),
+      queued: false,
+      queuePreview: [],
       memory
     };
   }
   const netease = await searchNeteaseSongs(artist, 12);
   if (netease.length) {
     return {
-      reply: `你的歌单里没找到 ${artist}，但网易云搜到 ${netease.length} 个候选；可以点卡片播放，或去 SongID 播放全部。`,
+      reply: `\u4f60\u7684\u5f53\u524d\u6b4c\u5355\u91cc\u6ca1\u627e\u5230 ${artist}\uff0c\u4f46\u7f51\u6613\u4e91\u641c\u5230\u4e86 ${netease.length} \u4e2a\u5019\u9009\uff0c\u5148\u7ed9\u4f60\u9009\u3002`,
       recommendations: neteaseRecommendations(netease),
       queued: false,
       queuePreview: [],
@@ -2770,34 +2834,16 @@ async function handleDsMusicIntent(intent, { prompt, playlist, payload, memory, 
   if (queryStyleFlags(prompt).noIntro) {
     const matches = await findNoIntroMatches(playlist, prompt, 12);
     await rememberRecommendations(memory, matches);
-    const shouldQueue = intent.autoplay || wantsPlaybackAction(prompt);
-    let queuedIndexes = shouldQueue ? matches.map((item) => item.index).filter((index) => index !== currentIndex) : [];
-    let switchedTrack = null;
-    if (queuedIndexes.length && wantsImmediateSwitch(prompt)) {
-      const [nextIndex, ...restIndexes] = queuedIndexes;
-      state.index = nextIndex;
-      state.playing = true;
-      state.lastHostLine = "";
-      queuedIndexes = restIndexes;
-      state.queue = queuedIndexes;
-      switchedTrack = playlist.tracks[nextIndex] || null;
-      fillHostLineAsync(state.index);
-      await broadcast();
-    } else if (queuedIndexes.length) {
-      state.queue = queuedIndexes;
-    }
     return {
       reply: matches.length
-        ? queuedIndexes.length
-          ? `我只保留了歌词时间戳显示 16 秒内进入人声的歌，已排 ${queuedIndexes.length} 首到当前歌曲后面。`
-          : `我只列歌词时间戳显示 16 秒内进入人声的歌，下面这些更接近“没有前奏”。`
-        : "我按歌词时间戳查了一轮，没有找到足够可靠的“16 秒内进入人声”歌曲，所以这次不硬排。",
+        ? "\u6211\u6309\u6b4c\u8bcd\u65f6\u95f4\u6233\u7b5b\u8fc7\u4e86\uff0c\u4e0b\u9762\u8fd9\u4e9b\u66f4\u63a5\u8fd1\u4f60\u8bf4\u7684\u201c\u65e0\u524d\u594f/\u5f88\u5feb\u8fdb\u4eba\u58f0\u201d\u3002"
+        : "\u6211\u6309\u6b4c\u8bcd\u65f6\u95f4\u6233\u7b5b\u4e86\u4e00\u8f6e\uff0c\u8fd9\u6b21\u6ca1\u627e\u5230\u8db3\u591f\u53ef\u9760\u7684\u201c\u5f88\u5feb\u8fdb\u4eba\u58f0\u201d\u5019\u9009\u3002",
       recommendations: matches.map((item) => ({
         ...recommendationFromMatch(item),
         firstLyricAt: item.firstLyricAt
       })),
-      queued: queuedIndexes.length > 0,
-      queuePreview: queuePreviewFromIndexes(playlist, queuedIndexes),
+      queued: false,
+      queuePreview: [],
       memory
     };
   }
@@ -2882,65 +2928,24 @@ async function handleDsMusicIntent(intent, { prompt, playlist, payload, memory, 
       ? findSimilarStyleMatches(playlist, searchPrompt, payload.track, 12)
       : searchTracks(playlist, searchPrompt, 12);
     await rememberRecommendations(memory, matches);
-    const shouldQueue = intent.autoplay || wantsPlaybackAction(prompt);
-    let queuedIndexes = shouldQueue ? matches.map((item) => item.index).filter((index) => index !== currentIndex) : [];
-    let switchedTrack = null;
-    if (queuedIndexes.length && wantsImmediateSwitch(prompt)) {
-      const [nextIndex, ...restIndexes] = queuedIndexes;
-      state.index = nextIndex;
-      state.playing = true;
-      state.lastHostLine = "";
-      queuedIndexes = restIndexes;
-      state.queue = queuedIndexes;
-      switchedTrack = playlist.tracks[nextIndex] || null;
-      fillHostLineAsync(state.index);
-      await broadcast();
-    } else if (queuedIndexes.length) {
-      state.queue = queuedIndexes;
-    }
     if (!matches.length) {
-      const neteaseQuery = semanticStyleQuery(prompt, intent.style || extractStyleLabel(prompt) || searchPrompt)
-        .replace(/接下来|继续播放|播放|我想听|想听|我要听|来点|推荐|歌曲|音乐|为我|给我/g, " ")
-        .replace(/\s+/g, " ")
-        .trim() || searchPrompt;
+      const neteaseQuery = semanticStyleQuery(prompt, intent.style || extractStyleLabel(prompt) || searchPrompt).trim() || searchPrompt;
       const netease = await searchNeteaseSongs(neteaseQuery, 12);
-      const externalTracks = netease.map((track) => externalNeteaseTrack(track)).filter((track) => track.sourceId);
-      if (shouldQueue && externalTracks.length) {
-        state.nextTracks ||= [];
-        for (const track of externalTracks) {
-          if (!state.nextTracks.some((item) => String(item.sourceId || item.id) === String(track.sourceId || track.id))) {
-            state.nextTracks.push(track);
-          }
-        }
-      }
       return {
         reply: netease.length
-          ? shouldQueue
-            ? `当前歌单里没筛到特别稳定的 ${neteaseQuery}，我改去网易云搜到了 ${netease.length} 个候选，已放到当前歌曲后面。`
-            : `当前歌单里没筛到特别稳定的 ${neteaseQuery}，我改去网易云搜到了 ${netease.length} 个候选。`
-          : `我按 ${neteaseQuery} 搜了当前歌单和网易云，都没拿到稳定的候选。`,
+          ? `\u5f53\u524d\u6b4c\u5355\u91cc\u6ca1\u6709\u7a33\u5b9a\u547d\u4e2d\u201c${neteaseQuery}\u201d\uff0c\u6211\u6539\u53bb\u7f51\u6613\u4e91\u641c\u5230\u4e86 ${netease.length} \u4e2a\u5019\u9009\u3002`
+          : `\u6211\u6309\u201c${neteaseQuery}\u201d\u5728\u5f53\u524d\u6b4c\u5355\u548c\u7f51\u6613\u4e91\u91cc\u90fd\u627e\u4e86\u4e00\u8f6e\uff0c\u8fd9\u6b21\u6ca1\u6709\u62ff\u5230\u5408\u9002\u5019\u9009\u3002`,
         recommendations: neteaseRecommendations(netease),
-        queued: shouldQueue && externalTracks.length > 0,
-        queuePreview: externalTracks.slice(0, 12).map((track, index) => ({
-          index,
-          title: track.title,
-          artist: track.artist,
-          album: track.album || ""
-        })),
+        queued: false,
+        queuePreview: [],
         memory
       };
     }
     return {
-      reply: matches.length
-        ? switchedTrack
-          ? `已直接切到：${switchedTrack.title} - ${switchedTrack.artist}。后面还接了 ${queuedIndexes.length} 首同方向的歌。`
-        : queuedIndexes.length
-          ? `我按你的意思筛了 ${matches.length} 首，已排到当前歌曲后面。`
-          : `我按这个方向筛了 ${matches.length} 首，可以从下面挑。`
-        : "我按你的意思筛了一遍当前歌单，但没找到足够稳定的候选，所以先不硬排。",
+      reply: `\u6211\u6309\u8fd9\u4e2a\u65b9\u5411\u7b5b\u4e86 ${matches.length} \u9996\uff0c\u5148\u653e\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\u3002`,
       recommendations: matches.slice(0, 12).map(recommendationFromMatch),
-      queued: queuedIndexes.length > 0,
-      queuePreview: queuePreviewFromIndexes(playlist, queuedIndexes),
+      queued: false,
+      queuePreview: [],
       memory
     };
   }
@@ -3540,6 +3545,13 @@ async function currentPayload() {
   };
 }
 
+async function currentPayloadWithSequence() {
+  return {
+    ...(await currentPayload()),
+    sequenceState: await playbackSequence()
+  };
+}
+
 async function broadcast() {
   await savePlaybackState();
   const payload = `data: ${JSON.stringify(await currentPayload())}\n\n`;
@@ -3713,22 +3725,43 @@ async function playbackSequence(limit = 600) {
   const playlist = await loadPlaylist();
   const activePlaylist = activePlaybackPlaylist(playlist);
   const current = activePlaybackPointer(playlist);
-  const items = current.track ? [{ ...trackSequenceItem(current.track, current.index, "current"), label: "正在播放" }] : [];
+  const currentKey = current.track ? playbackTrackKey(current.track) : "";
+  const currentLabel = current.source === "temp" ? "Chat 插播" : "正在播放";
+  const items = current.track ? [{ ...trackSequenceItem(current.track, current.index, "current"), label: currentLabel }] : [];
+  const seenKeys = new Set();
+  let allowCurrentDuplicateFromNext = current.source === "temp" && Boolean(currentKey);
+  const pushUnique = (item, key) => {
+    if (!item || !key) return;
+    if (key === currentKey && allowCurrentDuplicateFromNext) {
+      allowCurrentDuplicateFromNext = false;
+      seenKeys.add(key);
+      items.push(item);
+      return;
+    }
+    if (seenKeys.has(key) || key === currentKey) return;
+    seenKeys.add(key);
+    items.push(item);
+  };
   for (const track of filterPlaybackTracks(state.nextTracks || [])) {
-    items.push({ ...trackSequenceItem(track, -1, "next"), label: "下一首播放" });
+    pushUnique({ ...trackSequenceItem(track, -1, "next"), label: "下一首播放" }, playbackTrackKey(track));
   }
   for (const index of state.queue || []) {
     const track = activePlaylist.tracks[Number(index)];
-    if (track) items.push({ ...trackSequenceItem(track, Number(index), "queue"), label: "Chat 队列" });
+    if (track) pushUnique({ ...trackSequenceItem(track, Number(index), "queue"), label: "Chat 队列" }, playbackTrackKey(track));
   }
   for (const track of filterPlaybackTracks(state.nextSessionPlaylist?.tracks || [])) {
-    items.push({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "Chat 队列" });
+    pushUnique({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "Chat 队列" }, playbackTrackKey(track));
   }
-  if (activePlaylist.tracks.length && !state.nextTracks?.length && !state.queue?.length && !state.nextSessionPlaylist?.tracks?.length) {
+  if (activePlaylist.tracks.length) {
     const start = (current.index + 1) % activePlaylist.tracks.length;
     for (let offset = 0; offset < Math.min(limit, activePlaylist.tracks.length - 1); offset += 1) {
       const index = (start + offset) % activePlaylist.tracks.length;
-      items.push({ ...trackSequenceItem(activePlaylist.tracks[index], index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "播放列表" });
+      const track = activePlaylist.tracks[index];
+      pushUnique(
+        { ...trackSequenceItem(track, index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "播放列表" },
+        playbackTrackKey(track)
+      );
+      if (items.length >= limit + 1) break;
     }
   }
   return {
@@ -3818,7 +3851,7 @@ async function handleApi(req, res, pathname) {
     const changed = await deleteSequenceEntry(body);
     if (!changed) return json(res, await currentPayload());
     await broadcast();
-    return json(res, await currentPayload());
+    return json(res, await currentPayloadWithSequence());
   }
   if (req.method === "GET" && pathname === "/api/health") return json(res, {
     ok: true,
@@ -3890,7 +3923,7 @@ async function handleApi(req, res, pathname) {
     state.lastHostLine = "";
     resetPlaybackPosition(tracks[state.index] || null);
     await broadcast();
-    return json(res, await currentPayload());
+    return json(res, await currentPayloadWithSequence());
   }
   if (req.method === "GET" && pathname === "/api/profile") {
     const playlist = await loadPlaylist();
@@ -4177,6 +4210,7 @@ async function handleApi(req, res, pathname) {
     const onlyPositionUpdate = originalKeys.length > 0 && Object.keys(body).length === 0;
     if (onlyPositionUpdate) {
       await savePlaybackState();
+      await broadcast();
       return json(res, await currentPayload());
     }
     state = { ...state, ...body };
@@ -4189,6 +4223,12 @@ async function handleApi(req, res, pathname) {
     pushPlayStack(activePlaybackPointer(playlist));
     const activePlaylist = activePlaybackPlaylist(playlist);
     state.nextTracks = filterPlaybackTracks(state.nextTracks || []);
+    if (state.tempTrack && state.nextTracks?.length) {
+      const currentTempKey = playbackTrackKey(state.tempTrack);
+      while (state.nextTracks.length && playbackTrackKey(state.nextTracks[0]) === currentTempKey) {
+        state.nextTracks.shift();
+      }
+    }
     if (state.nextTracks?.length) {
       state.tempTrack = state.nextTracks.shift();
       state.lastHostLine = "";
@@ -4359,8 +4399,11 @@ async function handleApi(req, res, pathname) {
         sourceId
       });
       pushCurrentIfChanging(playlist, state.tempTrack);
-      state.nextTracks = filterPlaybackTracks(state.nextTracks || [])
-        .filter((item) => String(item.sourceId || item.id) !== sourceId);
+      state.nextTracks = [
+        state.tempTrack,
+        ...filterPlaybackTracks(state.nextTracks || [])
+          .filter((item) => String(item.sourceId || item.id) !== sourceId)
+      ];
       state.playing = true;
       state.lastHostLine = "";
       resetPlaybackPosition(state.tempTrack);
@@ -4414,8 +4457,6 @@ async function handleApi(req, res, pathname) {
     const weather = payload.weather;
     const prompt = String(body.message || "").slice(0, 1000);
     const memory = await rememberChat(prompt);
-    const chatMayChangePlayback = wantsPlaybackAction(prompt) || wantsImmediateSwitch(prompt) || wantsMusicContinuation(prompt);
-    if (chatMayChangePlayback) rememberPlaybackContext("chat");
     if (isIdentityQuestion(prompt)) {
       return json(res, {
         reply: answerNormalChatFallback(prompt, payload, memory),
@@ -4427,26 +4468,30 @@ async function handleApi(req, res, pathname) {
     }
     const explicitPlaybackCommand = extractExplicitPlaybackCommand(prompt);
     if (explicitPlaybackCommand) {
-      await rememberPendingTitle(memory, explicitPlaybackCommand);
-      return json(res, await playTitleImmediately(explicitPlaybackCommand, playlist, memory));
+      return json(res, await presentTitleChoices(explicitPlaybackCommand, playlist, memory));
     }
     if (isBarePlaybackCommand(prompt)) {
-      return json(res, await handleBarePlaybackCommand(playlist, memory));
+      if (pendingTitleIsFresh(memory)) {
+        return json(res, await presentTitleChoices(memory.pendingTitle, playlist, memory));
+      }
+      return json(res, {
+        reply: "我这次不直接接管下一首。你先给我一个歌名、歌手或者风格，我把候选列出来，再由你自己选单首加入当前队列，或者点追加全部。",
+        recommendations: [],
+        queued: false,
+        queuePreview: [],
+        memory
+      });
     }
     const immediatePlaybackTarget = extractImmediatePlaybackTarget(prompt);
     if (immediatePlaybackTarget) {
-      await rememberPendingTitle(memory, immediatePlaybackTarget);
-      return json(res, await playTitleImmediately(immediatePlaybackTarget, playlist, memory));
+      return json(res, await presentTitleChoices(immediatePlaybackTarget, playlist, memory));
     }
     if (pendingTitleIsFresh(memory) && wantsPendingTitlePlayback(prompt)) {
-      return json(res, await playTitleImmediately(memory.pendingTitle, playlist, memory));
+      return json(res, await presentTitleChoices(memory.pendingTitle, playlist, memory));
     }
     const requestedTitle = extractRequestedTitle(prompt);
     if (requestedTitle && !looksLikeStyleRequest(prompt)) {
-      await rememberPendingTitle(memory, requestedTitle);
-      if (wantsPlaybackAction(prompt)) {
-        return json(res, await playTitleImmediately(requestedTitle, playlist, memory));
-      }
+      return json(res, await presentTitleChoices(requestedTitle, playlist, memory));
     }
     if (process.env.DEEPSEEK_API_KEY) {
       let dsIntent = deterministicStyleIntent(prompt, memory) || await dsMusicIntent(prompt, memory, payload);
@@ -4457,11 +4502,12 @@ async function handleApi(req, res, pathname) {
           title: "",
           artist: "",
           style: semanticStyleQuery(prompt),
-          autoplay: wantsPlaybackAction(prompt),
+          autoplay: false,
           reply: "",
           confidence: 0.92
         };
       }
+      dsIntent = normalizeChatIntentForSelection(dsIntent || {});
       const dsHandled = await handleDsMusicIntent(dsIntent, { prompt, playlist, payload, memory, taste, weather });
       if (dsHandled) return json(res, await finalizeDeepSeekChatResponse(dsHandled, { prompt, intent: dsIntent, payload, memory }));
       return json(res, {
@@ -4753,21 +4799,14 @@ async function handleApi(req, res, pathname) {
     if (memory.pendingArtistAlias && looksLikeBareArtistName(prompt) && !isPlainQuestion(prompt)) {
       const artistName = cleanQuery(prompt);
       const pendingAlias = memory.pendingArtistAlias;
-      const pendingIntent = memory.pendingArtistIntent;
       await rememberArtistAlias(memory, pendingAlias, artistName);
-      const continuationPrompt = `我要听${artistName}的歌`;
+      const continuationPrompt = `\u6211\u60f3\u542c${artistName}\u7684\u6b4c`;
       const matches = findArtistMatches(playlist, continuationPrompt, memory);
-      const queuedIndexes = pendingIntent === "play"
-        ? matches.map((item) => item.index).filter((index) => index !== state.index % playlist.tracks.length)
-        : [];
-      if (queuedIndexes.length) state.queue = queuedIndexes;
       await rememberRecommendations(memory, matches);
       return json(res, {
         reply: matches.length
-          ? queuedIndexes.length
-            ? `明白了，“${pendingAlias}”就是 ${artistName}。我把你的歌单里 ${matches.length} 首都排到后面了。`
-            : `明白了，“${pendingAlias}”就是 ${artistName}。你的歌单里找到 ${matches.length} 首，下面这些可以点播放。`
-          : `明白了，“${pendingAlias}”就是 ${artistName}。不过你的歌单里暂时没找到这个名字。`,
+          ? `\u660e\u767d\u4e86\uff0c\u201c${pendingAlias}\u201d\u5c31\u662f ${artistName}\u3002\u6211\u5148\u628a\u627e\u5230\u7684 ${matches.length} \u9996\u653e\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\u3002`
+          : `\u660e\u767d\u4e86\uff0c\u201c${pendingAlias}\u201d\u5c31\u662f ${artistName}\u3002\u4e0d\u8fc7\u5f53\u524d\u6b4c\u5355\u91cc\u6682\u65f6\u8fd8\u6ca1\u627e\u5230\u8fd9\u4e2a\u540d\u5b57\u3002`,
         recommendations: matches.slice(0, 12).map((item) => ({
           index: item.index,
           title: item.track.title,
@@ -4776,17 +4815,11 @@ async function handleApi(req, res, pathname) {
           sourceId: item.track.sourceId || item.track.id || "",
           score: item.score
         })),
-        queued: queuedIndexes.length > 0,
-        queuePreview: queuedIndexes.slice(0, 12).map((index) => ({
-          index,
-          title: playlist.tracks[index].title,
-          artist: playlist.tracks[index].artist,
-          album: playlist.tracks[index].album || ""
-        })),
+        queued: false,
+        queuePreview: [],
         memory
       });
     }
-
     if (wantsMusicSearch(prompt) && looksLikeBareArtistName(prompt)) {
       const bareArtistMatches = findArtistMatches(playlist, `我要听${prompt}的歌`, memory);
       if (bareArtistMatches.length) {
@@ -4829,31 +4862,19 @@ async function handleApi(req, res, pathname) {
     if (directTitleQuery) {
       const matches = findTitleMatches(playlist, directTitleQuery, 12);
       await rememberRecommendations(memory, matches);
-      const queuedIndexes = matches
-        .map((item) => item.index)
-        .filter((index) => index !== state.index % playlist.tracks.length);
-      if (queuedIndexes.length) state.queue = queuedIndexes;
       const netease = matches.length ? [] : await searchNeteaseSongs(directTitleQuery, 8);
       return json(res, {
         reply: matches.length
-          ? queuedIndexes.length === 1
-            ? `找到了《${matches[0].track.title}》，已排到当前歌曲后面。`
-            : `找到 ${matches.length} 个和《${directTitleQuery}》匹配的版本，已按匹配度排到当前歌曲后面。`
+          ? `\u627e\u5230 ${matches.length} \u4e2a\u548c\u300a${directTitleQuery}\u300b\u63a5\u8fd1\u7684\u7ed3\u679c\uff0c\u5148\u653e\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\u3002`
           : netease.length
-            ? `你的歌单里没有《${directTitleQuery}》，又去网易云搜到了 ${netease.length} 个候选；点卡片可以临时播放。`
-            : `我搜了你的歌单和网易云，都没找到《${directTitleQuery}》。`,
+            ? `\u5f53\u524d\u6b4c\u5355\u91cc\u6ca1\u6709\u300a${directTitleQuery}\u300b\uff0c\u4f46\u7f51\u6613\u4e91\u641c\u5230\u4e86 ${netease.length} \u4e2a\u5019\u9009\u3002`
+            : `\u6211\u641c\u4e86\u5f53\u524d\u6b4c\u5355\u548c\u7f51\u6613\u4e91\uff0c\u90fd\u6ca1\u627e\u5230\u300a${directTitleQuery}\u300b\u3002`,
         recommendations: matches.length ? matches.map(recommendationFromMatch) : neteaseRecommendations(netease),
-        queued: queuedIndexes.length > 0,
-        queuePreview: queuedIndexes.slice(0, 12).map((index) => ({
-          index,
-          title: playlist.tracks[index].title,
-          artist: playlist.tracks[index].artist,
-          album: playlist.tracks[index].album || ""
-        })),
+        queued: false,
+        queuePreview: [],
         memory
       });
     }
-
     const shouldTryTitleSearch = wantsSpecificSongPlayback(prompt)
       || expandedQueryAliases(cleanQuery(prompt)).length > 0
       || /检索|搜索|搜|查|查询/.test(normalizeText(prompt));
@@ -4869,46 +4890,32 @@ async function handleApi(req, res, pathname) {
     if (!explicitTitleMode && wantsCurrentArtistQueue(prompt)) {
       const currentArtist = payload.track.artist || "";
       const matches = currentArtist
-        ? findArtistMatches(playlist, `我要听${currentArtist}的歌`, memory)
+        ? findArtistMatches(playlist, `\u6211\u60f3\u542c${currentArtist}\u7684\u6b4c`, memory)
             .filter((item) => item.index !== state.index % playlist.tracks.length)
         : [];
       await rememberRecommendations(memory, matches);
-      const queuedIndexes = matches.map((item) => item.index);
-      if (queuedIndexes.length) state.queue = queuedIndexes;
       return json(res, {
         reply: matches.length
-          ? `我理解“该歌手”指的是 ${currentArtist}。你的歌单里找到 ${matches.length} 首其他作品，已排到当前歌曲后面。`
+          ? `\u6211\u7406\u89e3\u201c\u8be5\u6b4c\u624b\u201d\u6307\u7684\u662f ${currentArtist}\u3002\u6211\u5148\u628a ${matches.length} \u9996\u76f8\u5173\u4f5c\u54c1\u5217\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\u3002`
           : currentArtist
-            ? `我理解“该歌手”指的是 ${currentArtist}，但你的歌单里暂时没找到除当前这首以外的其他作品。`
-            : "我没拿到当前歌手信息，所以这次不能可靠地按“该歌手”排歌。",
+            ? `\u6211\u7406\u89e3\u201c\u8be5\u6b4c\u624b\u201d\u6307\u7684\u662f ${currentArtist}\uff0c\u4f46\u5f53\u524d\u6b4c\u5355\u91cc\u6682\u65f6\u6ca1\u627e\u5230\u9664\u6b63\u5728\u64ad\u653e\u8fd9\u9996\u4e4b\u5916\u7684\u5176\u4ed6\u4f5c\u54c1\u3002`
+            : "\u6211\u8fd9\u6b21\u6ca1\u62ff\u5230\u5f53\u524d\u6b4c\u624b\u4fe1\u606f\uff0c\u6240\u4ee5\u5148\u4e0d\u7ed9\u4f60\u4e71\u6392\u961f\u3002",
         recommendations: matches.slice(0, 12).map(recommendationFromMatch),
-        queued: queuedIndexes.length > 0,
-        queuePreview: queuedIndexes.slice(0, 12).map((index) => ({
-          index,
-          title: playlist.tracks[index].title,
-          artist: playlist.tracks[index].artist,
-          album: playlist.tracks[index].album || ""
-        })),
+        queued: false,
+        queuePreview: [],
         memory
       });
     }
     if (!explicitTitleMode && !explicitArtistMode && wantsSimilarStyleQueue(prompt)) {
       const matches = findSimilarStyleMatches(playlist, prompt, payload.track, 12);
       await rememberRecommendations(memory, matches);
-      const queuedIndexes = matches.map((item) => item.index).filter((index) => index !== state.index % playlist.tracks.length);
-      if (queuedIndexes.length) state.queue = queuedIndexes;
       return json(res, {
         reply: matches.length
-          ? `我按当前这首的气质和你说的“慢节奏/类似”排了 ${queuedIndexes.length} 首，播完当前这首会接上。`
-          : "我按当前这首的气质和“慢节奏/类似”筛了一遍，但你的歌单里没有足够稳的候选，所以先不硬排。",
+          ? `\u6211\u6309\u5f53\u524d\u8fd9\u9996\u7684\u6c14\u8d28\u548c\u4f60\u8bf4\u7684\u65b9\u5411\u7b5b\u4e86 ${matches.length} \u9996\uff0c\u5148\u653e\u5728\u4e0b\u9762\u7ed9\u4f60\u9009\u3002`
+          : "\u6211\u6309\u5f53\u524d\u8fd9\u9996\u7684\u6c14\u8d28\u548c\u4f60\u8bf4\u7684\u65b9\u5411\u7b5b\u4e86\u4e00\u8f6e\uff0c\u8fd9\u6b21\u6ca1\u6709\u62ff\u5230\u7a33\u5b9a\u5019\u9009\u3002",
         recommendations: matches.map(recommendationFromMatch),
-        queued: queuedIndexes.length > 0,
-        queuePreview: queuedIndexes.slice(0, 12).map((index) => ({
-          index,
-          title: playlist.tracks[index].title,
-          artist: playlist.tracks[index].artist,
-          album: playlist.tracks[index].album || ""
-        })),
+        queued: false,
+        queuePreview: [],
         memory
       });
     }
@@ -4921,7 +4928,7 @@ async function handleApi(req, res, pathname) {
     if (!explicitArtistMode && (looksLikeSpecificArtistRequest(prompt) || likelyUnknownArtistRequest)) {
       const query = cleanQuery(prompt) || prompt;
       memory.pendingArtistAlias = query;
-      memory.pendingArtistIntent = wantsChatAutoplay(prompt) ? "play" : "search";
+      memory.pendingArtistIntent = "search";
       await writeJson("memory.json", memory);
       return json(res, {
         reply: `我不确定“${query}”具体指哪位歌手，所以先不乱排歌。你告诉我完整歌手名，或者说“这个就是 XXX”，我再按这个名字找。`,
@@ -4937,7 +4944,7 @@ async function handleApi(req, res, pathname) {
       const query = cleanQuery(prompt) || prompt;
       if (/(?:的歌|歌手|歌曲|音乐)/.test(normalizeText(prompt)) && compactText(query).length <= 16) {
         memory.pendingArtistAlias = query;
-        memory.pendingArtistIntent = wantsChatAutoplay(prompt) ? "play" : "search";
+      memory.pendingArtistIntent = "search";
         await writeJson("memory.json", memory);
       }
       return json(res, {
@@ -4950,15 +4957,7 @@ async function handleApi(req, res, pathname) {
     }
     const recommendations = confidentMatches(rawRecommendations);
     await rememberRecommendations(memory, recommendations);
-    const queuedIndexes = wantsChatAutoplay(prompt)
-      ? recommendations
-        .map((item) => item.index)
-        .filter((index) => index !== state.index % playlist.tracks.length)
-        .slice(0, (explicitArtistMode || explicitTitleMode) ? recommendations.length : 12)
-      : [];
-    if (queuedIndexes.length) {
-      state.queue = queuedIndexes;
-    }
+    const queuedIndexes = [];
     const albumMode = /专辑|album/i.test(prompt);
     const recommendationText = recommendations.length
       ? recommendations.map((item, itemIndex) => `${itemIndex + 1}. ${item.track.title} - ${item.track.artist}${item.track.album ? `《${item.track.album}》` : ""}`).join("\n")
@@ -4986,7 +4985,9 @@ async function handleApi(req, res, pathname) {
           ? `我把 ${displayArtistRequest(prompt, recommendations, memory)} 在你的歌单里的 ${queuedIndexes.length} 首都排到当前歌曲后面了。`
           : `我把这个方向排到当前歌曲后面了，共 ${queuedIndexes.length} 首。`
       : "";
-    let reply = queueNotice || fallback;
+    let reply = recommendations.length
+      ? `${fallback} 你自己选单首加入当前队列，或者直接点追加全部。`
+      : fallback;
     try {
       const generated = await aiChat(
         [{ role: "user", content: [
@@ -5008,9 +5009,9 @@ async function handleApi(req, res, pathname) {
           "不要使用固定模板，不要每次都说“收到”。回复尽量像一句电台聊天，短一点。"
         ].join("\n")
       );
-      if (!queueNotice) reply = sanitizeStationReply(generated, fallback);
+      reply = sanitizeStationReply(generated, reply);
     } catch {
-      if (!queueNotice) reply = fallback;
+      reply ||= fallback;
     }
     return json(res, {
       reply,

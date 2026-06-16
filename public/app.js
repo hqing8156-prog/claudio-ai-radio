@@ -548,9 +548,7 @@ function renderHomeQueuePreview(data = {}) {
   if (els.homeQueueMeta) els.homeQueueMeta.textContent = `共 ${sequenceCount} 首`;
   els.homeQueueList.innerHTML = items.length
     ? items.map((track, order) => {
-      const displayIndex = Number.isInteger(Number(track.index)) && Number(track.index) >= 0
-        ? Number(track.index) + 1
-        : order + 1;
+      const displayIndex = order + 1;
       return `
       <button type="button" class="home-queue-item ${track.source === "current" ? "active-sequence" : ""}"
         data-home-queue-index="${order}"
@@ -1854,6 +1852,12 @@ function paint(payload, { announce = false } = {}) {
   const previousKey = trackKey(state?.track);
   const previousPlaying = Boolean(state?.playing);
   state = payload;
+  if (payload?.sequenceState?.items) {
+    renderHomeQueuePreview(payload.sequenceState);
+    if (document.body.classList.contains("lyrics-queue-open")) {
+      renderPlaylist({ ...payload.sequenceState, sequence: true });
+    }
+  }
   paintDesktopLyrics();
   const track = payload.track;
   const currentKey = trackKey(track);
@@ -2018,9 +2022,7 @@ function renderPlaylist(data) {
     els.playlistNext.disabled = true;
     els.playlistList.innerHTML = sequenceItems.length
       ? sequenceItems.map((track, order) => {
-        const displayIndex = Number.isInteger(Number(track.index)) && Number(track.index) >= 0
-          ? Number(track.index) + 1
-          : order + 1;
+        const displayIndex = order + 1;
         return `
         <button class="playlist-row sequence-row ${track.source === "current" ? "active-sequence" : ""}"
           data-sequence="${order}"
@@ -2369,8 +2371,19 @@ function addChat(role, text) {
 }
 
 function stationMessageHtml(text, recommendations = []) {
+  const batchTracks = escapeHtml(encodeURIComponent(JSON.stringify(recommendations.map((item) => ({
+    sourceId: item.sourceId || "",
+    title: item.title || "",
+    artist: item.artist || "",
+    artistIds: item.artistIds || [],
+    artistId: item.artistId || item.artistIds?.[0] || "",
+    album: item.album || "",
+    albumId: item.albumId || "",
+    cover: item.cover || "",
+    duration: Number(item.duration || 0)
+  })))));
   const cards = recommendations.length
-    ? `<div class="recommendations">${recommendations.map((item) => `
+    ? `<div class="recommendations"><div class="recommendation-actions"><button class="chat-append-all" type="button" data-chat-batch="${batchTracks}" title="追加全部到当前队列">追加全部</button></div>${recommendations.map((item) => `
       <button class="song-card" type="button"
         data-index="${item.index}"
         data-external="${item.external ? "1" : ""}"
@@ -2382,7 +2395,7 @@ function stationMessageHtml(text, recommendations = []) {
         data-album-id="${escapeHtml(item.albumId || "")}"
         data-cover="${escapeHtml(item.cover || "")}"
         data-duration="${escapeHtml(item.duration || "")}"
-        title="播放 ${escapeHtml(item.title)}">
+        title="加入当前队列 ${escapeHtml(item.title)}">
         <span>
           <strong>${escapeHtml(item.title)}</strong>
           <small>${escapeHtml([item.external ? "网易云" : "", item.artist || "", item.album || ""].filter(Boolean).join(" · "))}</small>
@@ -3376,6 +3389,7 @@ async function playCurrentSongidBatch() {
     })
   });
   paint(payload, { announce: true });
+  await refreshPlaybackSequenceViews();
   toggleSongidActionMenu(false);
 }
 
@@ -3460,29 +3474,48 @@ els.chatLog.addEventListener("click", async (event) => {
     await loadArtistWorks(artistLink.dataset.artist, artistLink.dataset.artistId);
     return;
   }
+  const appendAll = event.target.closest(".chat-append-all");
+  if (appendAll?.dataset.chatBatch) {
+    try {
+      const tracks = JSON.parse(decodeURIComponent(appendAll.dataset.chatBatch));
+      if (!Array.isArray(tracks) || !tracks.length) return;
+      const payload = await api("/api/append-batch", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Chat 推荐",
+          tracks
+        })
+      });
+      paint(payload, { announce: false });
+      showTransientStatus("已把整批候选追加到当前队列");
+      await refreshPlaybackSequenceViews();
+    } catch {
+      showTransientStatus("追加全部失败");
+    }
+    return;
+  }
   const card = event.target.closest(".song-card");
   if (!card?.dataset.index) return;
-  const body = card.dataset.external
-    ? {
-      track: {
-        sourceId: card.dataset.sourceId,
-        title: card.dataset.title,
-        artist: card.dataset.artist,
-        album: card.dataset.album,
-        cover: card.dataset.cover,
-        duration: Number(card.dataset.duration || 0)
-      }
-    }
-    : { index: Number(card.dataset.index) };
-  startOptimisticPlayback(body.track || trackFromDataset(card), card);
   try {
-    const payload = await api("/api/play", {
+    const payload = await api("/api/append-batch", {
       method: "POST",
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        name: "Chat 推荐",
+        tracks: [{
+          sourceId: card.dataset.sourceId,
+          title: card.dataset.title,
+          artist: card.dataset.artist,
+          album: card.dataset.album,
+          cover: card.dataset.cover,
+          duration: Number(card.dataset.duration || 0)
+        }]
+      })
     });
-    paint(payload, { announce: true });
-  } finally {
-    finishOptimisticPlayback(card);
+    paint(payload, { announce: false });
+    showTransientStatus("已加入当前队列");
+    await refreshPlaybackSequenceViews();
+  } catch {
+    showTransientStatus("加入队列失败");
   }
 });
 
