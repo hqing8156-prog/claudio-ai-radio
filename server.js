@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
-const APP_VERSION = "2026-06-16-home-playlist-covers-v319";
+const APP_VERSION = "2026-06-16-chat-sync-reflection-v324";
 const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
   .split(",")
   .map((item) => item.trim())
@@ -479,6 +479,41 @@ function pendingTitleIsFresh(memory) {
   return Number.isFinite(age) && age < 10 * 60 * 1000;
 }
 
+function isExplicitPlaybackPrefix(text) {
+  return /^(?:播放|播一下|播一首|放一下|放一首|来一首|切到|切换到|直接播放|直接切到|play|put on|listen to)\b/i.test(String(text || "").trim());
+}
+
+function stripPlaybackTargetTail(text) {
+  return String(text || "")
+    .replace(/(?:这首歌|这首|歌曲|歌|音乐)$/i, "")
+    .replace(/[，。！？、,.!?;；:："'“”‘’]+$/g, "")
+    .trim();
+}
+
+function extractExplicitPlaybackCommand(prompt) {
+  const text = String(prompt || "").trim();
+  if (!text) return "";
+  const directMatch = text.match(/^(?:\u64ad\u653e|\u64ad\u4e00\u4e0b|\u64ad\u4e00\u9996|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u6765\u4e00\u9996|\u5207\u5230|\u5207\u6362\u5230|\u76f4\u63a5\u64ad\u653e|\u76f4\u63a5\u5207\u5230|play|put on|listen to)\s*[:\uff1a]?\s*[\"'\u201c\u201d\u300a]?\s*(.{1,120}?)\s*[\"'\u201c\u201d\u300b]?\s*$/i);
+  if (directMatch?.[1]) {
+    const candidate = String(directMatch[1] || "")
+      .replace(/(?:\u8fd9\u9996\u6b4c|\u8fd9\u9996|\u6b4c\u66f2|\u6b4c|\u97f3\u4e50)$/i, "")
+      .replace(/[，。！？、,.!?;；:："'“”‘’]+$/g, "")
+      .trim();
+    if (!candidate) return "";
+    if (looksLikeStyleRequest(candidate)) return "";
+    if (/(?:\u6b4c\u624b|\u6b4c\u66f2|\u97f3\u4e50)$/i.test(candidate)) return "";
+    return candidate;
+  }
+  const asciiTail = text.match(/([a-z0-9][a-z0-9 '&/().,_-]{1,80})\s*$/i);
+  if (asciiTail?.[1]) {
+    const prefix = text.slice(0, asciiTail.index).trim();
+    if (/^(?:\u64ad\u653e|\u64ad\u4e00\u4e0b|\u64ad\u4e00\u9996|\u653e\u4e00\u4e0b|\u653e\u4e00\u9996|\u6765\u4e00\u9996|\u5207\u5230|\u5207\u6362\u5230|\u76f4\u63a5\u64ad\u653e|\u76f4\u63a5\u5207\u5230)$/i.test(prefix)) {
+      return asciiTail[1].trim();
+    }
+  }
+  return "";
+}
+
 function wantsPendingTitlePlayback(prompt) {
   const text = normalizeText(prompt);
   return /直接播放|播放就行|就这首|不用确认|默认版本|原声版/i.test(text);
@@ -502,57 +537,78 @@ function extractRequestedTitle(prompt) {
   return "";
 }
 
+function extractImmediatePlaybackTarget(prompt) {
+  const text = String(prompt || "").trim();
+  const patterns = [
+    /^(?:播放|播|放|来一首|给我放|给我播|我想听|我要听)\s*[:：]?\s*[《"']?\s*(.{1,120}?)\s*[》"']?\s*$/i,
+    /^(?:play|put on|listen to)\s+(.{1,120}?)\s*$/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    const candidate = String(match[1] || "")
+      .replace(/[。！!？?，,;；]+$/g, "")
+      .trim();
+    if (!candidate) continue;
+    if (looksLikeStyleRequest(candidate)) return "";
+    if (/(?:的歌|歌手|歌曲|音乐)$/i.test(candidate)) return "";
+    return candidate;
+  }
+  const asciiTail = text.match(/([a-z0-9][a-z0-9 '&/().,_-]{1,80})\s*$/i);
+  if (asciiTail?.[1]) {
+    const candidate = asciiTail[1].trim();
+    const prefix = text.slice(0, asciiTail.index).trim();
+    const prefixLooksBroken = prefix && !/[a-z0-9\u4e00-\u9fff]/i.test(prefix) && prefix.length <= 8;
+    const prefixLooksCommand = /(?:播放|播|放|听|play|put on|listen to|[?？]{1,4})/i.test(prefix);
+    if ((prefixLooksBroken || prefixLooksCommand) && !looksLikeStyleRequest(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
 async function playTitleImmediately(title, playlist, memory) {
   const cleanTitle = String(title || "").trim();
   if (!cleanTitle) return null;
-  const localMatches = findTitleMatches(playlist, cleanTitle, 8);
+  const activePlaylist = activePlaybackPlaylist(playlist);
+  const localMatches = findTitleMatches(activePlaylist, cleanTitle, 8);
   if (localMatches.length) {
     const first = localMatches[0];
-    const rest = localMatches.slice(1).map((item) => item.index).filter((index) => index !== first.index);
     state.tempTrack = null;
     state.index = first.index;
     state.playing = true;
     state.lastHostLine = "";
-    state.queue = rest;
+    state.queue = [];
     fillHostLineAsync(state.index);
     await rememberRecommendations(memory, localMatches);
     await clearPendingTitle(memory);
     await broadcast();
     return {
-      reply: rest.length
-        ? `已直接播放《${playlist.tracks[first.index].title}》，另外 ${rest.length} 个匹配版本排在后面。`
-        : `已直接播放《${playlist.tracks[first.index].title}》。`,
+      reply: `已直接播放《${activePlaylist.tracks[first.index].title}》。`,
       recommendations: localMatches.map(recommendationFromMatch),
-      queued: rest.length > 0,
-      queuePreview: queuePreviewFromIndexes(playlist, rest),
+      queued: false,
+      queuePreview: [],
       memory
     };
   }
   const netease = await searchNeteaseSongs(cleanTitle, 8);
   const tracks = netease.map((track) => externalNeteaseTrack(track)).filter((track) => track.sourceId);
   if (tracks.length) {
-    const [first, ...rest] = tracks;
+    const [first] = tracks;
     state.sessionPlaylist = null;
     state.nextSessionPlaylist = null;
     state.tempTrack = first;
-    state.nextTracks = rest;
+    state.nextTracks = [];
     state.playing = true;
     state.lastHostLine = "";
     fillTempHostLineAsync(first);
     await clearPendingTitle(memory);
     await broadcast();
     return {
-      reply: rest.length
-        ? `已直接播放网易云搜索到的《${first.title}》，后面还排了 ${rest.length} 个相关版本。`
-        : `已直接播放网易云搜索到的《${first.title}》。`,
+      reply: `已直接播放网易云搜索到的《${first.title}》。`,
       recommendations: neteaseRecommendations(netease),
-      queued: rest.length > 0,
-      queuePreview: rest.slice(0, 12).map((track, index) => ({
-        index,
-        title: track.title,
-        artist: track.artist,
-        album: track.album || ""
-      })),
+      queued: false,
+      queuePreview: [],
       memory
     };
   }
@@ -696,6 +752,17 @@ async function getSongUrl(songId) {
   const promise = (async () => {
     const levels = [level, ...AUDIO_QUALITY_FALLBACK_ORDER.filter((item) => item !== level)];
     const attempts = [];
+    let firstPlayable = null;
+    const isBrowserFriendlyAudio = (item = {}) => {
+      const type = String(item.type || "").toLowerCase();
+      const levelName = String(item.level || "").toLowerCase();
+      const urlText = String(item.url || "").toLowerCase();
+      if (!urlText) return false;
+      if (type.includes("flac")) return false;
+      if (/\.flac(\?|$)/.test(urlText)) return false;
+      if (["sky", "jyeffect", "jymaster"].includes(levelName)) return false;
+      return true;
+    };
     for (const requestedLevel of levels) {
       const url = addNeteaseCookie(new URL(`${base}/song/url/v1`));
       url.searchParams.set("id", songId);
@@ -707,7 +774,7 @@ async function getSongUrl(songId) {
         const item = data.data?.[0];
         attempts.push({ level: requestedLevel, code: item?.code || data.code || 0, hasUrl: Boolean(item?.url) });
         if (item?.url) {
-          return {
+          const payload = {
             url: item.url,
             level: item.level || requestedLevel,
             requestedLevel: level,
@@ -717,10 +784,20 @@ async function getSongUrl(songId) {
             code: item.code || data.code,
             source: "netease"
           };
+          if (!firstPlayable) firstPlayable = payload;
+          if (isBrowserFriendlyAudio(item)) return payload;
         }
       } catch (error) {
         attempts.push({ level: requestedLevel, error: error.message || "request failed", hasUrl: false });
       }
+    }
+    if (firstPlayable) {
+      return {
+        ...firstPlayable,
+        fallback: true,
+        browserFallback: true,
+        attempts
+      };
     }
     return {
       url: "",
@@ -4356,8 +4433,18 @@ async function handleApi(req, res, pathname) {
         memory
       });
     }
+    const explicitPlaybackCommand = extractExplicitPlaybackCommand(prompt);
+    if (explicitPlaybackCommand) {
+      await rememberPendingTitle(memory, explicitPlaybackCommand);
+      return json(res, await playTitleImmediately(explicitPlaybackCommand, playlist, memory));
+    }
     if (isBarePlaybackCommand(prompt)) {
       return json(res, await handleBarePlaybackCommand(playlist, memory));
+    }
+    const immediatePlaybackTarget = extractImmediatePlaybackTarget(prompt);
+    if (immediatePlaybackTarget) {
+      await rememberPendingTitle(memory, immediatePlaybackTarget);
+      return json(res, await playTitleImmediately(immediatePlaybackTarget, playlist, memory));
     }
     if (pendingTitleIsFresh(memory) && wantsPendingTitlePlayback(prompt)) {
       return json(res, await playTitleImmediately(memory.pendingTitle, playlist, memory));

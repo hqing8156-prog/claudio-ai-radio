@@ -98,6 +98,9 @@ body:not(.immersive-lyrics-open) .track,body:not(.immersive-lyrics-open) .progre
 body.immersive-lyrics-open .cover{position:relative!important;overflow:visible!important;filter:drop-shadow(0 24px 28px rgba(0,0,0,.36))!important}
 body.immersive-lyrics-open .cover .cover-art{position:relative!important;z-index:4!important;width:100%!important;height:100%!important;object-fit:cover!important;aspect-ratio:1/1!important}
 body.immersive-lyrics-open .cover .disc,body.immersive-lyrics-open .cover #scope{position:relative!important;z-index:4!important}
+body.immersive-lyrics-open .cover-reflection{height:var(--cover-reflection-height,min(46%,220px))!important;opacity:.94!important;-webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.98) 0%,rgba(0,0,0,.86) 30%,rgba(0,0,0,.52) 68%,rgba(0,0,0,0) 100%)!important;mask-image:linear-gradient(180deg,rgba(0,0,0,.98) 0%,rgba(0,0,0,.86) 30%,rgba(0,0,0,.52) 68%,rgba(0,0,0,0) 100%)!important}
+body.immersive-lyrics-open .cover-reflection::after{background:linear-gradient(180deg,rgba(11,17,23,0) 0%,rgba(11,17,23,.08) 40%,rgba(11,17,23,.28) 100%)!important}
+body.immersive-lyrics-open .cover::after{display:none!important;content:none!important}
 body.immersive-lyrics-open .player .controls #sequenceBtn,body.immersive-lyrics-open.lyrics-queue-open .player .controls #sequenceBtn{position:fixed!important;right:28px!important;top:50%!important;z-index:120!important;display:grid!important;width:42px!important;min-width:42px!important;height:42px!important;min-height:42px!important;opacity:1!important;pointer-events:auto!important;transform:translateY(-50%)!important;background:rgba(16,22,29,.58)!important;border:1px solid rgba(255,255,255,.1)!important;box-shadow:0 12px 34px rgba(0,0,0,.32)!important}
 body.immersive-lyrics-open.lyrics-queue-open .player .controls #sequenceBtn{right:452px!important}
 body.immersive-lyrics-open{overflow:hidden!important}
@@ -329,6 +332,16 @@ function trackKey(track) {
 
 function audioKey(track) {
   return `audio:${track.sourceId || track.id || track.url}`;
+}
+
+function isEffectivelyPlaying(payload = state) {
+  const track = payload?.track;
+  if (!track || !payload?.playing) return false;
+  const key = audioKey(track);
+  if (pendingAudioKey === key) return true;
+  if (audio && activeSoundKey === key && !audio.paused && !audio.ended) return true;
+  if (audioUnlockPending && activeSoundKey === key) return true;
+  return false;
 }
 
 function playbackPositionKey(track) {
@@ -1228,8 +1241,9 @@ async function refreshAudioUrl(track, endpoint, expectedKey = activeSoundKey) {
     const data = await api(endpoint);
     if (!data.url) throw new Error("empty url");
     if (activeSoundKey !== expectedKey) return;
+    const safeUrl = String(data.url || "");
     stopAudio();
-    const instance = prepareAudioInstance(data.url);
+    const instance = prepareAudioInstance(safeUrl);
     seekAudioTo(pendingRestoreSeek || elapsedBeforePause, instance);
     instance.onended = () => handleAudioEnded(track, instance, expectedKey);
     instance.ontimeupdate = () => {
@@ -1341,9 +1355,19 @@ function startSilentFallback(track) {
   stopAudio();
   stopTone();
   stopSilentFallback();
-  showTransientStatus("NO PLAYABLE URL · SKIP");
+  showTransientStatus("当前歌曲暂时无法播放");
   silentFallbackTimer = window.setTimeout(() => {
-    if (state?.playing) nextTrack("fallback");
+    if (!state?.playing || activeSoundKey !== key) return;
+    api("/api/state", {
+      method: "POST",
+      body: JSON.stringify({
+        playing: false,
+        positionSeconds: Number(elapsedBeforePause || currentElapsed() || 0),
+        positionTrackKey: playbackPositionKey(track)
+      })
+    }).then((payload) => {
+      paint(payload);
+    }).catch(() => {});
   }, 2500);
 }
 
@@ -1757,7 +1781,9 @@ function updateCoverReflectionLayer() {
   const coverRect = els.cover.getBoundingClientRect();
   const defaultHeight = Math.min(Math.round(coverRect.height * 0.34), 160);
   let height = defaultHeight;
-  if (!document.body.classList.contains("immersive-lyrics-open")) {
+  if (document.body.classList.contains("immersive-lyrics-open")) {
+    height = Math.min(Math.round(coverRect.height * 0.46), 220);
+  } else {
     const target = els.album && !els.album.classList.contains("hidden") ? els.album : els.artist;
     const targetRect = target?.getBoundingClientRect();
     if (targetRect && coverRect.height > 0) {
@@ -1852,10 +1878,11 @@ function paint(payload, { announce = false } = {}) {
   els.duration.textContent = format(duration);
   updateWeatherLabel(payload.weather);
   syncCoverVisual(track, { force: changedTrack });
+  const effectivePlaying = isEffectivelyPlaying(payload);
   els.play.textContent = "";
-  els.play.classList.toggle("is-playing", Boolean(payload.playing));
-  els.play.setAttribute("aria-label", payload.playing ? "Pause" : "Play");
-  els.play.title = payload.playing ? "Pause" : "Play";
+  els.play.classList.toggle("is-playing", effectivePlaying);
+  els.play.setAttribute("aria-label", effectivePlaying ? "Pause" : "Play");
+  els.play.title = effectivePlaying ? "Pause" : "Play";
   if (els.like) {
     const canLike = Boolean(neteaseSongId(track));
     els.like.disabled = !canLike;
@@ -2170,16 +2197,27 @@ async function setPlaying(playing) {
 
 async function handlePlayButtonClick(event) {
   event?.preventDefault?.();
-  if (audioUnlockPending && state?.playing) {
-    await resumeAudioAfterGesture();
-    return;
-  }
-  if (state?.playing && state?.track) {
-    const currentAudioKey = audioKey(state.track);
-    if (!hasAudibleCurrentAudio(currentAudioKey) && pendingAudioKey !== currentAudioKey) {
+  const currentTrack = state?.track;
+  if (currentTrack) {
+    const currentAudioKey = audioKey(currentTrack);
+    const hasLiveAudio = hasAudibleCurrentAudio(currentAudioKey);
+    const isCurrentPending = pendingAudioKey === currentAudioKey;
+    const hasCurrentSource = Boolean(
+      audio &&
+      (audio.currentSrc || audio.src) &&
+      activeSoundKey === currentAudioKey
+    );
+    if (!state?.playing && !hasCurrentSource) {
+      await setPlaying(true);
+      return;
+    }
+    if (audioUnlockPending || (state?.playing && (!hasLiveAudio || isCurrentPending))) {
       audioContext?.resume?.().catch(() => {});
       primeAudioPlayback().catch(() => {});
-      startAudio(state.track);
+      stopSilentFallback();
+      audioUnlockPending = false;
+      pendingAudioKey = "";
+      startAudio(currentTrack);
       return;
     }
   }
@@ -2309,7 +2347,7 @@ function addChat(role, text) {
 function stationMessageHtml(text, recommendations = []) {
   const cards = recommendations.length
     ? `<div class="recommendations">${recommendations.map((item) => `
-      <button class="song-card"
+      <button class="song-card" type="button"
         data-index="${item.index}"
         data-external="${item.external ? "1" : ""}"
         data-source-id="${escapeHtml(item.sourceId || "")}"
@@ -2323,7 +2361,7 @@ function stationMessageHtml(text, recommendations = []) {
         title="播放 ${escapeHtml(item.title)}">
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <small>${item.external ? "网易云 · " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` · ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
+          <small>${escapeHtml([item.external ? "网易云" : "", item.artist || "", item.album || ""].filter(Boolean).join(" · "))}</small>
         </span>
         <span class="play-chip" aria-hidden="true"></span>
       </button>
@@ -2335,7 +2373,7 @@ function stationMessageHtml(text, recommendations = []) {
 function recommendationCards(recommendations = []) {
   return recommendations.length
     ? recommendations.map((item) => `
-      <button class="song-card"
+      <button class="song-card" type="button"
         data-index="${item.index}"
         data-external="${item.external ? "1" : ""}"
         data-source-id="${escapeHtml(item.sourceId || "")}"
@@ -2349,7 +2387,7 @@ function recommendationCards(recommendations = []) {
         title="播放 ${escapeHtml(item.title)}">
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <small>${item.external ? "网易云 · " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` · ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
+          <small>${escapeHtml([item.external ? "网易云" : "", item.artist || "", item.album || ""].filter(Boolean).join(" · "))}</small>
         </span>
         <span class="play-chip" aria-hidden="true"></span>
       </button>
@@ -3378,6 +3416,12 @@ els.chatForm.addEventListener("submit", async (event) => {
     });
     updateChatMemory(memory);
     updateStationMessage(pending, reply, recommendations);
+    try {
+      const latest = await api("/api/now");
+      if (trackKey(latest?.track) !== trackKey(state?.track) || Boolean(latest?.playing) !== Boolean(state?.playing)) {
+        paint(latest, { announce: true });
+      }
+    } catch {}
   } catch (error) {
     updateStationMessage(pending, `这条回复失败了：${error.message || "网络或服务异常"}`);
   }
@@ -3489,7 +3533,8 @@ els.songidResults?.addEventListener("click", async (event) => {
   }
 });
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+const isDesktopShell = new URLSearchParams(window.location.search).get("desktop") === "1";
+if ("serviceWorker" in navigator && !isDesktopShell) navigator.serviceWorker.register("/sw.js");
 
 window.addEventListener("resize", scheduleAlbumReflection);
 els.coverArt?.addEventListener("load", scheduleAlbumReflection);

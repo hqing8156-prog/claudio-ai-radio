@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -24,6 +24,8 @@ let loginWindow;
 let settingsWindow;
 let serverProcess;
 let neteaseApiProcess;
+let neteaseApiStartupPromise = null;
+let neteaseApiIssueShown = false;
 
 app.setPath("userData", path.join(app.getPath("appData"), "Claudio AI Radio Desktop"));
 app.setAppUserModelId("com.claudio.ai-radio");
@@ -42,6 +44,34 @@ function desktopDataDir() {
 
 function configPath() {
   return path.join(app.getPath("userData"), "config.json");
+}
+
+function desktopLogPath() {
+  return path.join(app.getPath("userData"), "logs", "desktop.log");
+}
+
+function appendDesktopLog(scope, message, extra = "") {
+  try {
+    const target = desktopLogPath();
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const suffix = extra ? `\n${extra}` : "";
+    fs.appendFileSync(target, `[${new Date().toISOString()}] [${scope}] ${message}${suffix}\n`, "utf8");
+  } catch {}
+}
+
+function notifyNeteaseApiIssue(reason) {
+  appendDesktopLog("netease-api", reason, `projectPath=${readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`);
+  if (neteaseApiIssueShown) return;
+  neteaseApiIssueShown = true;
+  const detail = `网易云服务没有成功启动。\n\n原因：${reason}\n\n日志位置：${desktopLogPath()}\n项目目录：${readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`;
+  if (app.isReady()) {
+    dialog.showMessageBox({
+      type: "warning",
+      title: "Claudio AI Radio Desktop",
+      message: "网易云服务启动失败",
+      detail
+    }).catch(() => {});
+  }
 }
 
 function readConfig() {
@@ -163,6 +193,19 @@ function startServer() {
   });
 }
 
+async function loadPlayerWindow(window) {
+  if (!window || window.isDestroyed()) return;
+  const targetUrl = `${APP_URL}/?desktop=1&t=${Date.now()}`;
+  try {
+    const ses = window.webContents.session;
+    await ses.clearCache();
+    await ses.clearStorageData({
+      storages: ["serviceworkers", "cachestorage", "indexdb", "localstorage"]
+    });
+  } catch {}
+  await window.loadURL(targetUrl);
+}
+
 function stopServer() {
   if (!serverProcess || serverProcess.killed) return;
   serverProcess.kill();
@@ -196,9 +239,18 @@ async function isNeteaseApiReady(timeoutMs = 1200) {
 
 async function startNeteaseApiIfNeeded() {
   if (await isNeteaseApiReady()) return true;
-  if (neteaseApiProcess && !neteaseApiProcess.killed) return false;
+  if (neteaseApiStartupPromise) return neteaseApiStartupPromise;
+  if (neteaseApiProcess && !neteaseApiProcess.killed) {
+    neteaseApiStartupPromise = isNeteaseApiReady(12000).finally(() => {
+      neteaseApiStartupPromise = null;
+    });
+    return neteaseApiStartupPromise;
+  }
   const apiDir = readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath;
-  if (!fs.existsSync(path.join(apiDir, "package.json"))) return false;
+  if (!fs.existsSync(path.join(apiDir, "package.json"))) {
+    notifyNeteaseApiIssue(`找不到 api-enhanced 项目: ${apiDir}`);
+    return false;
+  }
   neteaseApiProcess = spawn(process.execPath, [path.join(__dirname, "netease-api-runner.cjs"), apiDir], {
     cwd: projectRoot(),
     env: { ...process.env, PORT: "4000", ELECTRON_RUN_AS_NODE: "1" },
@@ -206,9 +258,22 @@ async function startNeteaseApiIfNeeded() {
     windowsHide: true
   });
   neteaseApiProcess.on("exit", () => {
+    appendDesktopLog("netease-api", "process exited");
     neteaseApiProcess = null;
+    neteaseApiStartupPromise = null;
   });
-  return isNeteaseApiReady(12000);
+  appendDesktopLog("netease-api", "spawned process", `projectPath=${apiDir}`);
+  neteaseApiStartupPromise = isNeteaseApiReady(12000).then((ready) => {
+    if (!ready) notifyNeteaseApiIssue("等待 4000 端口超时，服务未就绪");
+    else appendDesktopLog("netease-api", "ready on port 4000");
+    return ready;
+  }).catch((error) => {
+    notifyNeteaseApiIssue(error?.message || "未知错误");
+    return false;
+  }).finally(() => {
+    neteaseApiStartupPromise = null;
+  });
+  return neteaseApiStartupPromise;
 }
 
 function createMainWindow() {
@@ -231,7 +296,7 @@ function createMainWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
-  mainWindow.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`);
+  loadPlayerWindow(mainWindow).catch(() => {});
 }
 
 function createLoginWindow() {
@@ -294,7 +359,7 @@ function installMenu() {
         { label: "NetEase Login", click: createLoginWindow },
         { label: "Settings", click: createSettingsWindow },
         { type: "separator" },
-        { label: "Reload Player", click: () => mainWindow?.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`) },
+        { label: "Reload Player", click: () => loadPlayerWindow(mainWindow).catch(() => {}) },
         { label: "Quit", role: "quit" }
       ]
     }
@@ -372,7 +437,7 @@ ipcMain.handle("config:save", async (_event, input) => {
   stopServer();
   startServer();
   await waitForServer();
-  if (mainWindow) mainWindow.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`);
+  if (mainWindow) await loadPlayerWindow(mainWindow);
   return { ok: true, config: { ...config, neteaseCookie: config.neteaseCookie ? "saved" : "" } };
 });
 
@@ -381,7 +446,7 @@ ipcMain.handle("legacy:import", async (_event, input = {}) => {
   stopServer();
   startServer();
   await waitForServer();
-  if (mainWindow) mainWindow.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`);
+  if (mainWindow) await loadPlayerWindow(mainWindow);
   return { ok: true, ...result };
 });
 
@@ -390,7 +455,7 @@ ipcMain.handle("desktop:reset-data", async (_event, input = {}) => {
   stopServer();
   startServer();
   await waitForServer();
-  if (mainWindow) mainWindow.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`);
+  if (mainWindow) await loadPlayerWindow(mainWindow);
   return { ok: true, ...result };
 });
 
@@ -409,7 +474,7 @@ ipcMain.handle("netease:qr-check", async (_event, key) => {
     stopServer();
     startServer();
     await waitForServer();
-    if (mainWindow) mainWindow.loadURL(`${APP_URL}/?desktop=1&t=${Date.now()}`);
+    if (mainWindow) await loadPlayerWindow(mainWindow);
   }
   return data;
 });
@@ -418,7 +483,7 @@ app.whenReady().then(async () => {
   installMenu();
   ensureDesktopDataDir();
   startServer();
-  startNeteaseApiIfNeeded().catch(() => {});
+  await startNeteaseApiIfNeeded().catch(() => false);
   const ready = await waitForServer();
   createMainWindow();
   if (!ready || !readConfig().neteaseCookie) createSettingsWindow();
