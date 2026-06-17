@@ -79,7 +79,7 @@ const clients = new Set();
 const DEFAULT_PLAYBACK_STATE = {
   playing: false,
   index: Math.floor(Math.random() * 100000),
-  volume: 0.72,
+  volume: 1,
   weatherLocation: null,
   // AI DJ disabled for now. Restore this line if the host copy is needed again:
   // lastHostLine: "欢迎回来。这一期从你的歌单里抽一段私人频率，先把耳朵放进声音里。",
@@ -3536,37 +3536,21 @@ async function chooseNextIndex(playlist) {
     state.sessionPlaylist = state.nextSessionPlaylist;
     state.nextSessionPlaylist = null;
     state.tempTrack = null;
+    syncPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
     return 0;
   }
+  state.queue = ensurePlaybackQueueIndexes(playlist, current, state.playbackMode);
   while (state.queue.length) {
     const queued = Number(state.queue.shift());
     if (Number.isInteger(queued) && queued >= 0 && queued < playlist.tracks.length && queued !== current) {
+      state.queue.push(current);
       return queued;
     }
   }
-  if (state.playbackMode === "sequence") return (current + 1) % playlist.tracks.length;
-  const weather = await getWeather();
-  const recent = new Set((state.history || [])
-    .map((item) => item.track?.sourceId || item.track?.id || item.track?.title)
-    .filter(Boolean)
-    .slice(0, Math.min(80, Math.floor(playlist.tracks.length / 3))));
-  const candidates = playlist.tracks.map((track, index) => ({ track, index }))
-    .filter((item) => item.index !== current)
-    .filter((item) => !recent.has(item.track.sourceId || item.track.id || item.track.title));
-  const pool = candidates.length ? candidates : playlist.tracks
-    .map((track, index) => ({ track, index }))
-    .filter((item) => item.index !== current);
-  const weighted = pool.map((item) => ({
-    ...item,
-    weight: 1 + Math.max(0, trackWeatherScore(item.track, weather))
-  }));
-  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
-  let pick = Math.random() * total;
-  for (const item of weighted) {
-    pick -= item.weight;
-    if (pick <= 0) return item.index;
-  }
-  return weighted[0]?.index ?? current;
+  state.queue = buildPlaybackQueueIndexes(playlist, current, state.playbackMode);
+  const queued = Number(state.queue.shift() ?? current);
+  if (queued !== current) state.queue.push(current);
+  return queued;
 }
 
 async function choosePreviousIndex(playlist) {
@@ -3805,8 +3789,75 @@ function pushPlayStack(pointer) {
   state.playStack = state.playStack.slice(-80);
 }
 
+function rotateTempTrackQueueToSourceId(sourceId = "") {
+  const targetId = String(sourceId || "").trim();
+  if (!targetId) return false;
+  const currentKey = playbackTrackKey(state.tempTrack);
+  const tempTracks = [
+    ...(state.tempTrack ? [externalNeteaseTrack(state.tempTrack)] : []),
+    ...filterPlaybackTracks(state.nextTracks || []).map((track) => externalNeteaseTrack(track))
+  ];
+  const uniqueTracks = [];
+  const seen = new Set();
+  for (const track of tempTracks) {
+    const key = playbackTrackKey(track);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    uniqueTracks.push(track);
+  }
+  const targetIndex = uniqueTracks.findIndex((track) => String(track.sourceId || track.id || "") === targetId);
+  if (targetIndex < 0) return false;
+  const rotated = [...uniqueTracks.slice(targetIndex), ...uniqueTracks.slice(0, targetIndex)];
+  const [nextCurrent, ...rest] = rotated;
+  state.tempTrack = nextCurrent || null;
+  state.nextTracks = rest.filter((track) => playbackTrackKey(track) !== currentKey);
+  return true;
+}
+
 function playbackTrackKey(track) {
   return String(track?.sourceId || track?.id || `${track?.title || ""}:${track?.artist || ""}`);
+}
+
+function normalizePlaybackQueueIndexes(playlist, indexes = [], currentIndex = 0) {
+  const total = Number(playlist?.tracks?.length || 0);
+  if (!total) return [];
+  const current = ((Number(currentIndex) % total) + total) % total;
+  const seen = new Set();
+  return (Array.isArray(indexes) ? indexes : [])
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0 && item < total && item !== current)
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function buildPlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.playbackMode || "sequence") {
+  const total = Number(playlist?.tracks?.length || 0);
+  if (total <= 1 || mode === "repeat-one") return [];
+  const current = ((Number(currentIndex) % total) + total) % total;
+  const indexes = [];
+  for (let offset = 1; offset < total; offset += 1) {
+    indexes.push((current + offset) % total);
+  }
+  if (mode !== "shuffle") return indexes;
+  for (let i = indexes.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indexes[i], indexes[j]] = [indexes[j], indexes[i]];
+  }
+  return indexes;
+}
+
+function ensurePlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.playbackMode || "sequence") {
+  const normalized = normalizePlaybackQueueIndexes(playlist, state.queue, currentIndex);
+  if (normalized.length) return normalized;
+  return buildPlaybackQueueIndexes(playlist, currentIndex, mode);
+}
+
+function syncPlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.playbackMode || "sequence") {
+  state.queue = buildPlaybackQueueIndexes(playlist, currentIndex, mode);
+  return state.queue;
 }
 
 function positionTrackKey(track) {
@@ -3894,7 +3945,7 @@ function restoreNextPlaybackContext() {
   return true;
 }
 
-async function playbackSequence(limit = 600) {
+async function playbackSequence(limit = 600, offset = 0) {
   const playlist = await loadPlaylist();
   const activePlaylist = activePlaybackPlaylist(playlist);
   const current = activePlaybackPointer(playlist);
@@ -3918,18 +3969,23 @@ async function playbackSequence(limit = 600) {
   for (const track of filterPlaybackTracks(state.nextSessionPlaylist?.tracks || [])) {
     pushUnique({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "\u64ad\u653e\u961f\u5217" }, playbackTrackKey(track));
   }
-  if (activePlaylist.tracks.length) {
-    const start = (current.index + 1) % activePlaylist.tracks.length;
-    for (let offset = 0; offset < Math.min(limit, activePlaylist.tracks.length - 1); offset += 1) {
-      const index = (start + offset) % activePlaylist.tracks.length;
-      const track = activePlaylist.tracks[index];
-      pushUnique(
-        { ...trackSequenceItem(track, index, "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "\u64ad\u653e\u5217\u8868" },
-        playbackTrackKey(track)
-      );
-      if (items.length >= limit + 1) break;
-    }
+  const queueIndexes = ensurePlaybackQueueIndexes(activePlaylist, current.index, state.playbackMode);
+  for (const index of queueIndexes) {
+    const track = activePlaylist.tracks[Number(index)];
+    if (!track) continue;
+    pushUnique(
+      { ...trackSequenceItem(track, Number(index), "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "\u64ad\u653e\u5217\u8868" },
+      playbackTrackKey(track)
+    );
   }
+  const safeLimit = Math.max(1, Number(limit || 0));
+  const safeOffset = Math.max(0, Number(offset || 0));
+  const visibleItems = items
+    .map((item, index) => ({
+      ...item,
+      sequenceNumber: index + 1
+    }))
+    .slice(safeOffset, safeOffset + safeLimit);
   return {
     playbackMode: state.playbackMode,
     playlistName: current.playlistName,
@@ -3937,13 +3993,32 @@ async function playbackSequence(limit = 600) {
     canRedoPlaylist: hasPlaybackContext(state.nextPlaybackContext),
     queuedCount: Math.max(0, items.length - 1),
     totalCount: items.length,
-    items: items.slice(0, limit)
+    offset: safeOffset,
+    returned: visibleItems.length,
+    items: visibleItems
   };
 }
 
 async function deleteSequenceEntry(body = {}) {
   const playlist = await loadPlaylist();
   const activePlaylist = activePlaybackPlaylist(playlist);
+  const current = activePlaybackPointer(playlist);
+  if (body?.clearAll) {
+    const currentTrack = current?.track;
+    if (!currentTrack) return false;
+    state.tempTrack = null;
+    state.sessionPlaylist = {
+      id: "cleared-sequence",
+      name: "播放队列",
+      tracks: [externalNeteaseTrack(currentTrack)]
+    };
+    state.nextSessionPlaylist = null;
+    state.nextTracks = [];
+    state.queue = [];
+    state.index = 0;
+    resetPlaybackPosition(state.sessionPlaylist.tracks[0]);
+    return true;
+  }
   const source = String(body.source || "").trim();
   const index = Number(body.index);
   const normalizedIndex = Number.isInteger(index) ? index : -1;
@@ -3981,7 +4056,6 @@ async function deleteSequenceEntry(body = {}) {
     }
   } else if (source === "library") {
     if (!activePlaylist.tracks.length) return false;
-    const current = activePlaybackPointer(playlist);
     const queue = [];
     const total = activePlaylist.tracks.length;
     for (let offset = 1; offset < total; offset += 1) {
@@ -4010,7 +4084,12 @@ async function handleApi(req, res, pathname) {
   }
 
   if (req.method === "GET" && pathname === "/api/now") return json(res, await currentPayload());
-  if (req.method === "GET" && pathname === "/api/sequence") return json(res, await playbackSequence());
+  if (req.method === "GET" && pathname === "/api/sequence") {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = Number(url.searchParams.get("limit") || 600);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    return json(res, await playbackSequence(limit, offset));
+  }
   if (req.method === "DELETE" && pathname === "/api/sequence") {
     const body = await parseBody(req);
     rememberPlaybackContext("sequence-delete");
@@ -4390,6 +4469,20 @@ async function handleApi(req, res, pathname) {
       await broadcast();
       return json(res, await currentPayload());
     }
+    if (Object.prototype.hasOwnProperty.call(body, "playbackMode")) {
+      const nextMode = ["sequence", "repeat-one", "shuffle"].includes(body.playbackMode)
+        ? body.playbackMode
+        : state.playbackMode;
+      body.playbackMode = nextMode;
+      const playlist = await loadPlaylist();
+      const activePlaylist = activePlaybackPlaylist(playlist);
+      const activeIndex = activePlaylist.tracks.length ? state.index % activePlaylist.tracks.length : 0;
+      if (activePlaylist.tracks.length) {
+        state.queue = buildPlaybackQueueIndexes(activePlaylist, activeIndex, nextMode);
+      } else {
+        state.queue = [];
+      }
+    }
     state = { ...state, ...body };
     await broadcast();
     return json(res, await currentPayload());
@@ -4407,7 +4500,12 @@ async function handleApi(req, res, pathname) {
       }
     }
     if (state.nextTracks?.length) {
-      state.tempTrack = state.nextTracks.shift();
+      const previousTempTrack = state.tempTrack ? externalNeteaseTrack(state.tempTrack) : null;
+      const nextTempTrack = state.nextTracks.shift();
+      if (previousTempTrack && playbackTrackKey(previousTempTrack) !== playbackTrackKey(nextTempTrack)) {
+        state.nextTracks.push(previousTempTrack);
+      }
+      state.tempTrack = nextTempTrack;
       state.lastHostLine = "";
       resetPlaybackPosition(state.tempTrack);
       fillTempHostLineAsync(state.tempTrack);
@@ -4433,10 +4531,19 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "GET" && pathname === "/api/previous") {
     const playlist = await loadPlaylist();
+    const activePlaylist = activePlaybackPlaylist(playlist);
+    const displacedPointer = activePlaybackPointer(playlist);
     const previous = state.playStack?.pop();
     if (previous?.track) {
       if (previous.source === "temp") {
+        const displacedTempTrack = state.tempTrack ? externalNeteaseTrack(state.tempTrack) : null;
         state.tempTrack = previous.track;
+        if (displacedTempTrack && playbackTrackKey(displacedTempTrack) !== playbackTrackKey(state.tempTrack)) {
+          state.nextTracks = [
+            displacedTempTrack,
+            ...filterPlaybackTracks(state.nextTracks || []).filter((track) => playbackTrackKey(track) !== playbackTrackKey(displacedTempTrack))
+          ];
+        }
       } else {
         if (previous.sessionId && state.sessionPlaylist?.id !== previous.sessionId) {
           state.sessionPlaylist = {
@@ -4450,6 +4557,21 @@ async function handleApi(req, res, pathname) {
         }
         state.tempTrack = null;
         state.index = Number.isInteger(previous.index) ? previous.index : state.index;
+        const restoredPlaylist = state.sessionPlaylist || activePlaylist;
+        const baseQueue = buildPlaybackQueueIndexes(restoredPlaylist, state.index, state.playbackMode);
+        const canPromoteDisplacedTrack = Boolean(
+          displacedPointer?.track &&
+          displacedPointer.source !== "temp" &&
+          Number.isInteger(displacedPointer.index) &&
+          displacedPointer.index !== state.index &&
+          String(displacedPointer.sessionId || "") === String(state.sessionPlaylist?.id || "")
+        );
+        state.queue = canPromoteDisplacedTrack
+          ? [
+            displacedPointer.index,
+            ...baseQueue.filter((item) => Number(item) !== Number(displacedPointer.index))
+          ]
+          : baseQueue;
       }
       state.playing = true;
       state.lastHostLine = "";
@@ -4458,7 +4580,6 @@ async function handleApi(req, res, pathname) {
       await broadcast();
       return json(res, await currentPayload());
     }
-    const activePlaylist = activePlaybackPlaylist(playlist);
     if (!activePlaylist.tracks.length) {
       state.tempTrack = null;
       state.playing = false;
@@ -4505,6 +4626,7 @@ async function handleApi(req, res, pathname) {
     state.tempTrack = null;
     state.nextTracks = [];
     state.index = 0;
+    state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
     state.playing = true;
     state.lastHostLine = "";
     resetPlaybackPosition(tracks[0]);
@@ -4554,15 +4676,50 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/play") {
     const body = await parseBody(req);
     const playlist = await loadPlaylist();
+    const activePlaylist = activePlaybackPlaylist(playlist);
+    if (body.fromSequence && String(body.source || "").trim() === "next" && (body.sourceId || body.track?.sourceId)) {
+      const sourceId = String(body.sourceId || body.track?.sourceId || "").trim();
+      if (rotateTempTrackQueueToSourceId(sourceId)) {
+        pushCurrentIfChanging(playlist, state.tempTrack);
+        state.playing = true;
+        state.lastHostLine = "";
+        resetPlaybackPosition(state.tempTrack);
+        warmSongUrl(sourceId);
+        fillTempHostLineAsync(state.tempTrack);
+        await broadcast();
+        return json(res, await currentPayload());
+      }
+    }
     if (body.track?.sourceId || body.sourceId) {
       const track = body.track || {};
       const sourceId = String(track.sourceId || body.sourceId || "").trim();
       if (isBlockedForPlayback(track)) return json(res, { error: "blocked track type" }, 400);
+      const activeMatchIndex = activePlaylist.tracks.findIndex((item) => String(item.sourceId || item.id || "") === sourceId);
+      if (activeMatchIndex >= 0) {
+        const matchedTrack = activePlaylist.tracks[activeMatchIndex];
+        pushCurrentIfChanging(playlist, matchedTrack);
+        state.tempTrack = null;
+        if (activePlaylist.source !== "netease-session") {
+          state.sessionPlaylist = null;
+          state.nextSessionPlaylist = null;
+        }
+        state.nextTracks = [];
+        state.index = activeMatchIndex;
+        state.queue = buildPlaybackQueueIndexes(activePlaylist, activeMatchIndex, state.playbackMode);
+        state.playing = true;
+        state.lastHostLine = "";
+        resetPlaybackPosition(matchedTrack);
+        warmSongUrl(sourceId);
+        fillHostLineAsync(state.index);
+        await broadcast();
+        return json(res, await currentPayload());
+      }
       const sessionIndex = state.sessionPlaylist?.tracks?.findIndex((item) => String(item.sourceId || item.id) === sourceId) ?? -1;
       if (sessionIndex >= 0) {
         pushCurrentIfChanging(playlist, state.sessionPlaylist.tracks[sessionIndex]);
         state.tempTrack = null;
         state.index = sessionIndex;
+        state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, sessionIndex, state.playbackMode);
         state.playing = true;
         state.lastHostLine = "";
         resetPlaybackPosition(state.sessionPlaylist.tracks[sessionIndex]);
@@ -4591,7 +4748,6 @@ async function handleApi(req, res, pathname) {
       return json(res, await currentPayload());
     }
     const index = Number(body.index);
-    const activePlaylist = activePlaybackPlaylist(playlist);
     if (!Number.isInteger(index) || index < 0 || index >= activePlaylist.tracks.length) {
       return json(res, { error: "invalid track index" }, 400);
     }
@@ -4605,6 +4761,7 @@ async function handleApi(req, res, pathname) {
     }
     state.nextTracks = [];
     state.index = index;
+    state.queue = buildPlaybackQueueIndexes(activePlaylist, index, state.playbackMode);
     state.playing = true;
     state.lastHostLine = "";
     resetPlaybackPosition(selectedTrack);

@@ -527,7 +527,7 @@ function saveHomeTasks() {
 }
 
 function clampVolume(value) {
-  return Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 0.72));
+  return Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 1));
 }
 
 function loadStoredVolume() {
@@ -535,7 +535,7 @@ function loadStoredVolume() {
     const saved = Number(localStorage.getItem(volumeStorageKey));
     if (Number.isFinite(saved)) return clampVolume(saved);
   } catch {}
-  return 0.72;
+  return 1;
 }
 
 function volumeIcon(value = currentVolume) {
@@ -2537,6 +2537,9 @@ async function playSequenceItem(item, element) {
   try {
     const body = {
       fromSequence: true,
+      source: item.source || "",
+      sourceId: item.sourceId || "",
+      track: trackFromDataset(element) || item,
       sequenceOrder: Number(element?.dataset?.sequence ?? -1),
       sequenceNumber: Number(element?.dataset?.sequenceNumber ?? item.sequenceNumber ?? 1)
     };
@@ -2620,13 +2623,23 @@ async function setPlaying(playing) {
   if (playing && currentTrack) {
     audioContext?.resume?.().catch(() => {});
     const currentAudioKey = audioKey(currentTrack);
-    const canResumeCurrentAudio = Boolean(
+    const isCurrentAudioSource = Boolean(
       audio &&
-      audio.paused &&
       (audio.currentSrc || audio.src) &&
       activeSoundKey === currentAudioKey
     );
-    if (canResumeCurrentAudio) {
+    const canResumeCurrentAudio = Boolean(
+      isCurrentAudioSource &&
+      audio.paused
+    );
+    const alreadyPlayingCurrentAudio = Boolean(
+      isCurrentAudioSource &&
+      !audio.paused &&
+      !audio.ended
+    );
+    if (alreadyPlayingCurrentAudio) {
+      audioUnlockPending = false;
+    } else if (canResumeCurrentAudio) {
       audio.play().then(() => {
         audioUnlockPending = false;
       }).catch((error) => {
@@ -2685,10 +2698,6 @@ async function handlePlayButtonClick(event) {
     currentSourceId: state?.track?.sourceId || state?.track?.id || "",
     playing: Boolean(state?.playing)
   });
-  if (state?.playing) {
-    await setPlaying(false);
-    return;
-  }
   const currentTrack = state?.track;
   if (currentTrack) {
     const currentAudioKey = audioKey(currentTrack);
@@ -2699,11 +2708,27 @@ async function handlePlayButtonClick(event) {
       (audio.currentSrc || audio.src) &&
       activeSoundKey === currentAudioKey
     );
-    if (!state?.playing && !hasCurrentSource) {
+    const isActuallyPlaying = Boolean(
+      audio &&
+      hasCurrentSource &&
+      !audio.paused &&
+      !audio.ended
+    );
+    const isActuallyPaused = Boolean(
+      audio &&
+      hasCurrentSource &&
+      audio.paused
+    );
+    const effectivePlaying = Boolean(state?.playing || isActuallyPlaying);
+    if (effectivePlaying) {
+      await setPlaying(false);
+      return;
+    }
+    if (!hasCurrentSource) {
       await setPlaying(true);
       return;
     }
-    if (audioUnlockPending || (!hasLiveAudio || isCurrentPending)) {
+    if (audioUnlockPending || isCurrentPending || (!hasLiveAudio && !isActuallyPaused)) {
       audioContext?.resume?.().catch(() => {});
       primeAudioPlayback().catch(() => {});
       stopSilentFallback();
@@ -2712,8 +2737,12 @@ async function handlePlayButtonClick(event) {
       startAudio(currentTrack);
       return;
     }
+    if (isActuallyPaused) {
+      await setPlaying(true);
+      return;
+    }
   }
-  await setPlaying(!state?.playing);
+  await setPlaying(true);
 }
 
 document.addEventListener("pointerdown", (event) => {
