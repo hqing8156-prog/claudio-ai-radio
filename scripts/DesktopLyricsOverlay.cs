@@ -35,6 +35,8 @@ namespace ClaudioRadio
 
     internal sealed class LyricsForm : Form
     {
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
         private const string ApiRoot = "http://localhost:3000";
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
@@ -118,6 +120,22 @@ namespace ClaudioRadio
             }
         }
 
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= WS_EX_TOOLWINDOW;
+                cp.ExStyle |= WS_EX_NOACTIVATE;
+                return cp;
+            }
+        }
+
+        protected override bool ShowWithoutActivation
+        {
+            get { return true; }
+        }
+
         public LyricsForm()
         {
             Text = "Claudio Lyrics";
@@ -143,9 +161,9 @@ namespace ClaudioRadio
             translationShadow = NewLyricLabel(13, FontStyle.Regular, Color.FromArgb(190, 0, 0, 0));
             translation = NewLyricLabel(13, FontStyle.Regular, Color.FromArgb(220, 248, 241, 228));
             next = NewLyricLabel(11, FontStyle.Regular, Color.FromArgb(155, 248, 241, 228));
-            prevButton = NewControlButton("<");
+            prevButton = NewControlButton("|◀");
             playButton = NewControlButton("II");
-            nextButton = NewControlButton(">");
+            nextButton = NewControlButton("▶|");
             menu = BuildContextMenu();
             ContextMenuStrip = menu;
             trayIcon = new NotifyIcon();

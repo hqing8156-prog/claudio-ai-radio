@@ -397,6 +397,20 @@ input:focus-visible,
   line-height: 1;
 }
 
+.transport-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.transport-icon path {
+  fill: currentColor;
+}
+
+.transport-icon rect {
+  fill: currentColor;
+}
+
 .sequence-button {
   width: 44px;
   height: 44px;
@@ -1795,7 +1809,7 @@ body {
   min-height: 44px !important;
   display: grid !important;
   grid-template-columns: 44px minmax(0, 1fr) auto !important;
-  align-items: center !important;
+  align-items: start !important;
   gap: 12px !important;
   margin: 0 !important;
 }
@@ -10040,20 +10054,25 @@ body.songid-detail-open #songid .songid-detail-cover-fallback {
 }
 
 body.songid-detail-open #songid .songid-detail-copy {
-  align-self: center !important;
+  align-self: start !important;
+  justify-self: start !important;
+  display: grid !important;
+  align-content: start !important;
+  justify-items: start !important;
+  text-align: left !important;
   min-width: 0 !important;
 }
 
 body.songid-detail-open #songid .songid-detail-copy strong {
   display: block !important;
-  max-width: 24ch !important;
-  overflow: hidden !important;
+  max-width: 100% !important;
+  overflow: visible !important;
   color: #f8f4ed !important;
   font-size: clamp(34px, 3.2vw, 46px) !important;
   font-weight: 850 !important;
   line-height: 1.08 !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
 }
 
 body.songid-detail-open #songid .songid-detail-copy small {
@@ -11290,6 +11309,36 @@ body:not(.immersive-lyrics-open) .player .controls-row-primary #nextBtn {
   position: static !important;
   grid-column: auto !important;
   margin: 0 !important;
+  align-self: center !important;
+  justify-self: center !important;
+  transform: none !important;
+}
+
+body:not(.immersive-lyrics-open) .player .controls-row-primary {
+  display: grid !important;
+  grid-template-columns: 52px 72px 52px !important;
+  justify-content: center !important;
+  align-items: center !important;
+  column-gap: 30px !important;
+}
+
+body:not(.immersive-lyrics-open) .player .controls-row-primary #prevBtn {
+  grid-column: 1 !important;
+}
+
+body:not(.immersive-lyrics-open) .player .controls-row-primary #playBtn {
+  grid-column: 2 !important;
+}
+
+body:not(.immersive-lyrics-open) .player .controls-row-primary #nextBtn {
+  grid-column: 3 !important;
+}
+
+body.immersive-lyrics-open .player .controls #prevBtn,
+body.immersive-lyrics-open .player .controls #nextBtn {
+  align-self: center !important;
+  justify-self: center !important;
+  transform: none !important;
 }
 
 /* v249: larger homepage playlist cards now that the right side has room */

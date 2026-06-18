@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog, nativeImage } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -26,6 +26,9 @@ let serverProcess;
 let neteaseApiProcess;
 let neteaseApiStartupPromise = null;
 let neteaseApiIssueShown = false;
+let thumbarSyncTimer = null;
+let lastThumbarSignature = "";
+let appQuitting = false;
 
 app.setPath("userData", path.join(app.getPath("appData"), "Claudio AI Radio Desktop"));
 app.setAppUserModelId("com.claudio.ai-radio");
@@ -49,6 +52,17 @@ function configPath() {
 function desktopLogPath() {
   return path.join(app.getPath("userData"), "logs", "desktop.log");
 }
+
+function createThumbarIcon(fileName) {
+  return nativeImage.createFromPath(path.join(projectRoot(), "build", "thumbar", fileName)).resize({ width: 16, height: 16 });
+}
+
+const THUMBAR_ICONS = {
+  previous: createThumbarIcon("previous.png"),
+  play: createThumbarIcon("play.png"),
+  pause: createThumbarIcon("pause.png"),
+  next: createThumbarIcon("next.png")
+};
 
 function appendDesktopLog(scope, message, extra = "") {
   try {
@@ -224,6 +238,99 @@ async function waitForServer(timeoutMs = 15000) {
   return false;
 }
 
+async function desktopFetch(pathname, { method = "GET", body } = {}) {
+  const response = await fetch(`${APP_URL}${pathname}`, {
+    method,
+    cache: "no-store",
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!response.ok) throw new Error(`Desktop API HTTP ${response.status}: ${pathname}`);
+  return response.json();
+}
+
+async function fetchThumbarPlaybackState() {
+  try {
+    return await desktopFetch("/api/now");
+  } catch (error) {
+    appendDesktopLog("thumbar", "fetch /api/now failed", String(error?.stack || error));
+    return null;
+  }
+}
+
+async function toggleDesktopPlayback() {
+  const payload = await fetchThumbarPlaybackState();
+  if (!payload) return null;
+  return desktopFetch("/api/state", {
+    method: "POST",
+    body: { playing: !Boolean(payload.playing) }
+  });
+}
+
+async function shutdownDesktopLyricsOverlay() {
+  try {
+    await desktopFetch("/api/desktop-lyrics/shutdown", { method: "POST" });
+  } catch (error) {
+    appendDesktopLog("desktop-lyrics", "shutdown failed", String(error?.stack || error));
+  }
+}
+
+async function invokeThumbarAction(action) {
+  try {
+    if (action === "previous") await desktopFetch("/api/previous");
+    if (action === "toggle") await toggleDesktopPlayback();
+    if (action === "next") await desktopFetch("/api/next");
+  } catch (error) {
+    appendDesktopLog("thumbar", `action failed: ${action}`, String(error?.stack || error));
+  } finally {
+    updateThumbarButtons(true).catch(() => {});
+  }
+}
+
+async function updateThumbarButtons(force = false) {
+  if (process.platform !== "win32") return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const payload = await fetchThumbarPlaybackState();
+  const playing = Boolean(payload?.playing);
+  const available = Boolean(payload);
+  const signature = `${available ? 1 : 0}:${playing ? 1 : 0}`;
+  if (!force && signature === lastThumbarSignature) return;
+  lastThumbarSignature = signature;
+  mainWindow.setThumbarButtons([
+    {
+      tooltip: "上一首",
+      icon: THUMBAR_ICONS.previous,
+      flags: available ? ["dismissonclick"] : ["disabled"],
+      click: () => invokeThumbarAction("previous")
+    },
+    {
+      tooltip: playing ? "暂停" : "播放",
+      icon: playing ? THUMBAR_ICONS.pause : THUMBAR_ICONS.play,
+      flags: available ? ["dismissonclick"] : ["disabled"],
+      click: () => invokeThumbarAction("toggle")
+    },
+    {
+      tooltip: "下一首",
+      icon: THUMBAR_ICONS.next,
+      flags: available ? ["dismissonclick"] : ["disabled"],
+      click: () => invokeThumbarAction("next")
+    }
+  ]);
+}
+
+function startThumbarSync() {
+  if (process.platform !== "win32") return;
+  stopThumbarSync();
+  thumbarSyncTimer = setInterval(() => {
+    updateThumbarButtons().catch(() => {});
+  }, 1500);
+}
+
+function stopThumbarSync() {
+  if (thumbarSyncTimer) clearInterval(thumbarSyncTimer);
+  thumbarSyncTimer = null;
+}
+
 async function isNeteaseApiReady(timeoutMs = 1200) {
   const base = (readConfig().neteaseApiBase || DEFAULT_CONFIG.neteaseApiBase).replace(/\/$/, "");
   const start = Date.now();
@@ -296,7 +403,20 @@ function createMainWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
+  mainWindow.webContents.on("did-finish-load", () => {
+    updateThumbarButtons(true).catch(() => {});
+  });
+  mainWindow.on("focus", () => {
+    updateThumbarButtons(true).catch(() => {});
+  });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    stopThumbarSync();
+    lastThumbarSignature = "";
+  });
   loadPlayerWindow(mainWindow).catch(() => {});
+  updateThumbarButtons(true).catch(() => {});
+  startThumbarSync();
 }
 
 function createLoginWindow() {
@@ -489,9 +609,21 @@ app.whenReady().then(async () => {
   if (!ready || !readConfig().neteaseCookie) createSettingsWindow();
 });
 
-app.on("before-quit", () => {
-  stopServer();
-  if (neteaseApiProcess && !neteaseApiProcess.killed) neteaseApiProcess.kill();
+app.on("before-quit", (event) => {
+  if (appQuitting) return;
+  appQuitting = true;
+  event.preventDefault();
+  (async () => {
+    stopThumbarSync();
+    await shutdownDesktopLyricsOverlay();
+    stopServer();
+    if (neteaseApiProcess && !neteaseApiProcess.killed) neteaseApiProcess.kill();
+    app.exit(0);
+  })().catch(() => {
+    stopServer();
+    if (neteaseApiProcess && !neteaseApiProcess.killed) neteaseApiProcess.kill();
+    app.exit(0);
+  });
 });
 
 app.on("window-all-closed", () => {

@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,8 @@ const DEFAULT_AUDIO_QUALITY = AUDIO_QUALITY_LEVELS.has(process.env.NETEASE_AUDIO
   : "lossless";
 const lyricCache = new Map();
 const favoritePlaylistMembershipCache = new Map();
+const neteaseLikeCache = new Map();
+const NETEASE_LIKE_CACHE_TTL_MS = 60_000;
 const NETEASE_PLAYLIST_NAMES = Object.fromEntries(
   String(process.env.NETEASE_PLAYLIST_NAMES || "")
     .split(",")
@@ -72,25 +74,29 @@ const EMPTY_TRACK = {
 };
 let neteaseLibraryCache = { expiresAt: 0, playlist: null };
 const songUrlCache = new Map();
+let neteaseApiProcess = null;
+let neteaseApiStartupPromise = null;
 
 mkdirSync(DATA_DIR, { recursive: true });
 
 const clients = new Set();
+const DEBUG_LOG_FILE = path.join(DATA_DIR, "playback-debug.log");
 const DEFAULT_PLAYBACK_STATE = {
   playing: false,
   index: Math.floor(Math.random() * 100000),
   volume: 1,
+  desktopLyricsEnabled: false,
+  tempTrackSequenceNumber: 0,
   weatherLocation: null,
   // AI DJ disabled for now. Restore this line if the host copy is needed again:
   // lastHostLine: "欢迎回来。这一期从你的歌单里抽一段私人频率，先把耳朵放进声音里。",
   lastHostLine: "",
   queue: [],
-  nextTracks: [],
   history: [],
   playStack: [],
   tempTrack: null,
   sessionPlaylist: null,
-  nextSessionPlaylist: null,
+  sequenceCleared: false,
   previousPlaybackContext: null,
   nextPlaybackContext: null,
   positionSeconds: 0,
@@ -123,31 +129,34 @@ const mime = {
 };
 
 const weatherLabels = new Map([
-  [0, "Clear"],
-  [1, "Mainly clear"],
-  [2, "Partly cloudy"],
-  [3, "Overcast"],
-  [45, "Fog"],
-  [48, "Rime fog"],
-  [51, "Light drizzle"],
-  [53, "Drizzle"],
-  [55, "Dense drizzle"],
-  [61, "Rain"],
-  [63, "Rain"],
-  [65, "Heavy rain"],
-  [71, "Snow"],
-  [73, "Snow"],
-  [75, "Heavy snow"],
-  [80, "Rain showers"],
-  [81, "Heavy showers"],
-  [82, "Violent showers"],
-  [95, "Thunderstorm"]
+  [0, "\u6674"],
+  [1, "\u6674"],
+  [2, "\u591a\u4e91"],
+  [3, "\u9634"],
+  [45, "\u96fe"],
+  [48, "\u96fe"],
+  [51, "\u5c0f\u96e8"],
+  [53, "\u5c0f\u96e8"],
+  [55, "\u5c0f\u96e8"],
+  [61, "\u96e8"],
+  [63, "\u96e8"],
+  [65, "\u5927\u96e8"],
+  [71, "\u96ea"],
+  [73, "\u96ea"],
+  [75, "\u5927\u96ea"],
+  [80, "\u9635\u96e8"],
+  [81, "\u9635\u96e8"],
+  [82, "\u5f3a\u9635\u96e8"],
+  [95, "\u96f7\u96e8"]
 ]);
 
+function configuredNeteaseCookie() {
+  return String(process.env.NETEASE_COOKIE || readDesktopConfig().neteaseCookie || "").trim();
+}
+
 function addNeteaseCookie(url) {
-  if (process.env.NETEASE_COOKIE) {
-    url.searchParams.set("cookie", process.env.NETEASE_COOKIE);
-  }
+  const cookie = configuredNeteaseCookie();
+  if (cookie) url.searchParams.set("cookie", cookie);
   return url;
 }
 
@@ -162,6 +171,21 @@ function json(res, value, status = 200) {
     "cache-control": "no-store"
   });
   res.end(body);
+}
+
+async function appendDebugLog(entry) {
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    event: String(entry?.event || "debug"),
+    source: String(entry?.source || "server"),
+    details: entry?.details || {}
+  });
+  await writeFile(DEBUG_LOG_FILE, `${line}\n`, { flag: "a" });
+}
+
+async function setDesktopLyricsEnabled(enabled) {
+  state.desktopLyricsEnabled = Boolean(enabled);
+  await savePlaybackState();
 }
 
 function openDesktopLyricsOverlay() {
@@ -277,30 +301,61 @@ async function deleteHomeTask(id) {
 async function loadPlaybackState() {
   try {
     const saved = await readJson("playback-state.json");
-    const savedSessionPlaylist = sanitizePersistedSessionPlaylist(saved.sessionPlaylist);
-    const savedNextSessionPlaylist = sanitizePersistedSessionPlaylist(saved.nextSessionPlaylist);
-    const savedNextTracks = sanitizePersistedTrackList(saved.nextTracks);
+    let savedSessionPlaylist = sanitizePersistedSessionPlaylist(saved.sessionPlaylist);
+    let savedNextTracks = sanitizePersistedTrackList(saved.nextTracks);
     const savedTempTrack = sanitizePersistedTrack(saved.tempTrack);
     const savedQueue = sanitizePersistedQueue(saved.queue);
     const savedPlayStack = sanitizePersistedPlayStack(saved.playStack);
     const savedPreviousPlaybackContext = sanitizePersistedPlaybackContext(saved.previousPlaybackContext);
     const savedNextPlaybackContext = sanitizePersistedPlaybackContext(saved.nextPlaybackContext);
     const savedIndex = Number(saved.index || 0);
+    let migratedLegacyNextTracks = false;
+    if (savedNextTracks.length) {
+      const sessionTracks = filterPlaybackTracks(savedSessionPlaylist?.tracks || []);
+      const sessionName = savedSessionPlaylist?.name || "NetEase Queue";
+      const sessionId = savedSessionPlaylist?.id || "netease-session";
+      const current = sessionTracks[savedIndex] ? [sessionTracks[savedIndex]] : [];
+      const before = sessionTracks.slice(0, Math.max(0, savedIndex));
+      const after = sessionTracks.slice(Math.max(0, savedIndex + 1));
+      const seen = new Set();
+      const mergedTracks = [...current, ...savedNextTracks, ...after, ...before]
+        .map((track) => externalNeteaseTrack({
+          ...track,
+          playlistId: track.playlistId || track.playlists?.[0]?.id || track.libraryPlaylistId || sessionId,
+          playlistName: track.playlistName || sessionName
+        }))
+        .filter((track) => {
+          const key = playbackTrackKey(track);
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      if (mergedTracks.length) {
+        savedSessionPlaylist = {
+          id: sessionId,
+          name: sessionName,
+          tracks: mergedTracks
+        };
+        savedNextTracks = [];
+        migratedLegacyNextTracks = true;
+      }
+    }
     const boundedIndex = savedSessionPlaylist?.tracks?.length
-      ? Math.min(Math.max(0, savedIndex), savedSessionPlaylist.tracks.length - 1)
+      ? Math.min(Math.max(0, migratedLegacyNextTracks ? 0 : savedIndex), savedSessionPlaylist.tracks.length - 1)
       : savedIndex;
     return {
       ...DEFAULT_PLAYBACK_STATE,
       ...saved,
       playing: Boolean(saved.playing),
+      desktopLyricsEnabled: Boolean(saved.desktopLyricsEnabled),
+      tempTrackSequenceNumber: Math.max(0, Number(saved.tempTrackSequenceNumber || 0)),
       index: Number.isFinite(boundedIndex) ? boundedIndex : DEFAULT_PLAYBACK_STATE.index,
       queue: savedQueue,
-      nextTracks: savedNextTracks,
       history: [],
       playStack: savedPlayStack,
       tempTrack: savedTempTrack,
       sessionPlaylist: savedSessionPlaylist,
-      nextSessionPlaylist: savedNextSessionPlaylist,
+      sequenceCleared: Boolean(saved.sequenceCleared),
       previousPlaybackContext: savedPreviousPlaybackContext,
       nextPlaybackContext: savedNextPlaybackContext,
       positionSeconds: Math.max(0, Number(saved.positionSeconds || 0)),
@@ -310,7 +365,14 @@ async function loadPlaybackState() {
       playbackMode: ["sequence", "repeat-one", "shuffle"].includes(saved.playbackMode) ? saved.playbackMode : "sequence",
       audioQuality: AUDIO_QUALITY_LEVELS.has(saved.audioQuality) ? saved.audioQuality : DEFAULT_AUDIO_QUALITY
     };
-  } catch {
+  } catch (error) {
+    try {
+      writeFileSync(
+        path.join(DATA_DIR, "playback-load-error.log"),
+        `[${new Date().toISOString()}] ${error?.stack || error?.message || String(error)}\n`,
+        { flag: "a", encoding: "utf8" }
+      );
+    } catch {}
     return {
       ...DEFAULT_PLAYBACK_STATE,
       index: Math.floor(Math.random() * 100000)
@@ -321,9 +383,10 @@ async function loadPlaybackState() {
 function sanitizePersistedSessionPlaylist(playlist) {
   const tracks = filterPlaybackTracks(playlist?.tracks || []);
   if (!tracks.length) return null;
+  const cleanName = String(playlist?.name || "").trim();
   return {
     id: String(playlist?.id || "netease-session"),
-    name: String(playlist?.name || "NetEase Queue").slice(0, 80),
+    name: (cleanName && !looksCorruptText(cleanName) ? cleanName : "NetEase Queue").slice(0, 80),
     tracks: tracks.map((track) => externalNeteaseTrack(track)).filter((track) => track.sourceId)
   };
 }
@@ -358,12 +421,20 @@ function sanitizePersistedPlayStack(stack = []) {
     .map((item) => {
       const track = sanitizePersistedTrack(item?.track);
       if (!track) return null;
+      const cleanPlaylistName = String(item?.playlistName || "").trim();
+      const sessionId = String(item?.sessionId || "").trim().slice(0, 120);
+      const index = Math.max(0, Number(item?.index || 0));
+      const source = item?.source === "temp" ? "temp" : "session";
+      const rawKey = String(item?.key || "").trim().slice(0, 240);
+      const key = rawKey && !looksCorruptText(rawKey)
+        ? rawKey
+        : `${source}:${sessionId}:${index}:${track.sourceId || track.id || track.title}:${track.artist || ""}`;
       return {
-        key: String(item?.key || "").trim().slice(0, 240),
-        index: Math.max(0, Number(item?.index || 0)),
-        source: item?.source === "temp" ? "temp" : "session",
-        sessionId: String(item?.sessionId || "").trim().slice(0, 120),
-        playlistName: String(item?.playlistName || "").trim().slice(0, 120),
+        key,
+        index,
+        source,
+        sessionId,
+        playlistName: (cleanPlaylistName && !looksCorruptText(cleanPlaylistName) ? cleanPlaylistName : "NetEase Queue").slice(0, 120),
         track
       };
     })
@@ -374,8 +445,6 @@ function sanitizePersistedPlayStack(stack = []) {
 function sanitizePersistedPlaybackContext(context) {
   if (!context || typeof context !== "object") return null;
   const sessionPlaylist = sanitizePersistedSessionPlaylist(context.sessionPlaylist);
-  const nextSessionPlaylist = sanitizePersistedSessionPlaylist(context.nextSessionPlaylist);
-  const nextTracks = sanitizePersistedTrackList(context.nextTracks);
   const tempTrack = sanitizePersistedTrack(context.tempTrack);
   const queue = sanitizePersistedQueue(context.queue);
   const maxIndex = sessionPlaylist?.tracks?.length ? sessionPlaylist.tracks.length - 1 : 0;
@@ -386,10 +455,9 @@ function sanitizePersistedPlaybackContext(context) {
     index: Number.isFinite(index) ? index : 0,
     playing: Boolean(context.playing),
     queue,
-    nextTracks,
     tempTrack,
     sessionPlaylist,
-    nextSessionPlaylist,
+    sequenceCleared: Boolean(context.sequenceCleared),
     playbackMode: ["sequence", "repeat-one", "shuffle"].includes(context.playbackMode) ? context.playbackMode : "sequence"
   };
   return hasPlaybackContext(sanitized) ? sanitized : null;
@@ -400,15 +468,16 @@ function persistedPlaybackStateSnapshot() {
     playing: Boolean(state.playing),
     index: Math.max(0, Number(state.index || 0)),
     volume: state.volume,
+    desktopLyricsEnabled: Boolean(state.desktopLyricsEnabled),
+    tempTrackSequenceNumber: Math.max(0, Number(state.tempTrackSequenceNumber || 0)),
     weatherLocation: state.weatherLocation,
     lastHostLine: "",
     queue: sanitizePersistedQueue(state.queue),
-    nextTracks: sanitizePersistedTrackList(state.nextTracks),
     history: [],
     playStack: sanitizePersistedPlayStack(state.playStack),
     tempTrack: sanitizePersistedTrack(state.tempTrack),
     sessionPlaylist: sanitizePersistedSessionPlaylist(state.sessionPlaylist),
-    nextSessionPlaylist: sanitizePersistedSessionPlaylist(state.nextSessionPlaylist),
+    sequenceCleared: Boolean(state.sequenceCleared),
     previousPlaybackContext: sanitizePersistedPlaybackContext(state.previousPlaybackContext),
     nextPlaybackContext: sanitizePersistedPlaybackContext(state.nextPlaybackContext),
     positionSeconds: Math.max(0, Number(state.positionSeconds || 0)),
@@ -424,16 +493,18 @@ async function savePlaybackState() {
 }
 
 state = await loadPlaybackState();
+delete state.nextTracks;
+delete state.nextSessionPlaylist;
 await savePlaybackState();
 
 async function loadPlaylist() {
   if (!NETEASE_LIBRARY_PLAYLIST_ID && !existsSync(path.join(DATA_DIR, "playlists.json"))) {
     return EMPTY_PLAYBACK_PLAYLIST;
   }
-  if (NETEASE_LIBRARY_PLAYLIST_ID && process.env.NETEASE_COOKIE && Date.now() < neteaseLibraryCache.expiresAt && neteaseLibraryCache.playlist) {
+  if (NETEASE_LIBRARY_PLAYLIST_ID && configuredNeteaseCookie() && Date.now() < neteaseLibraryCache.expiresAt && neteaseLibraryCache.playlist) {
     return neteaseLibraryCache.playlist;
   }
-  if (NETEASE_LIBRARY_PLAYLIST_ID && process.env.NETEASE_COOKIE) {
+  if (NETEASE_LIBRARY_PLAYLIST_ID && configuredNeteaseCookie()) {
     try {
       const base = (process.env.NETEASE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
       const item = await readNeteasePlaylistTracks(base, {
@@ -712,26 +783,32 @@ async function playTitleImmediately(title, playlist, memory) {
   const cleanTitle = String(title || "").trim();
   if (!cleanTitle) return null;
   const activePlaylist = activePlaybackPlaylist(playlist);
-  const removeFromNextTracks = (track) => {
-    const targetKey = playbackTrackKey(track);
-    state.nextTracks = filterPlaybackTracks(state.nextTracks || [])
-      .filter((item) => playbackTrackKey(item) !== targetKey);
-  };
-  const insertAsImmediateNext = (track) => {
-    removeFromNextTracks(track);
-    state.nextTracks = [track, ...filterPlaybackTracks(state.nextTracks || [])];
+  const insertAndPlayImmediately = (track) => {
+    const pointer = activePlaybackPointer(playlist);
+    const queueBase = state.sessionPlaylist?.tracks?.length
+      ? state.sessionPlaylist
+      : (activePlaylist.tracks.length ? activePlaylist : playlist);
+    const { currentTrack } = replaceCurrentWithExternalTrackAndKeepQueue(
+      queueBase,
+      track,
+      Number(pointer.index || state.index || 0)
+    );
+    state.sequenceCleared = false;
+    state.tempTrack = null;
+    state.tempTrackSequenceNumber = 0;
+    state.playing = true;
+    state.lastHostLine = "";
+    state.index = Math.max(0, Number(state.index || 0));
+    resetPlaybackPosition(currentTrack || track);
+    fillHostLineAsync(state.index);
+    return currentTrack || track;
   };
   const localMatches = findTitleMatches(activePlaylist, cleanTitle, 8);
   if (localMatches.length) {
     const first = localMatches[0];
     const selectedTrack = activePlaylist.tracks[first.index];
     pushCurrentIfChanging(playlist, selectedTrack);
-    insertAsImmediateNext(selectedTrack);
-    state.tempTrack = selectedTrack;
-    state.playing = true;
-    state.lastHostLine = "";
-    resetPlaybackPosition(selectedTrack);
-    fillTempHostLineAsync(selectedTrack);
+    insertAndPlayImmediately(selectedTrack);
     await rememberRecommendations(memory, localMatches);
     await clearPendingTitle(memory);
     await broadcast();
@@ -748,12 +825,7 @@ async function playTitleImmediately(title, playlist, memory) {
   if (tracks.length) {
     const [first] = tracks;
     pushCurrentIfChanging(playlist, first);
-    insertAsImmediateNext(first);
-    state.tempTrack = first;
-    state.playing = true;
-    state.lastHostLine = "";
-    resetPlaybackPosition(first);
-    fillTempHostLineAsync(first);
+    insertAndPlayImmediately(first);
     await clearPendingTitle(memory);
     await broadcast();
     return {
@@ -882,7 +954,7 @@ async function getWeather() {
     const data = await response.json();
     value = {
       city: data.name || location?.label || city,
-      text: data.weather?.[0]?.description || "未知",
+      text: data.weather?.[0]?.description || "\u672a\u77e5",
       temp: Math.round(data.main?.temp || 0),
       source: "openweather"
     };
@@ -901,8 +973,8 @@ async function getWeather() {
     const data = await response.json();
     const code = data.current?.weather_code;
     value = {
-      city: location.label || "当前位置",
-      text: weatherLabels.get(code) || "当地天气",
+      city: location.label || "\u5f53\u524d\u4f4d\u7f6e",
+      text: weatherLabels.get(code) || "\u5f53\u5730\u5929\u6c14",
       temp: Math.round(data.current?.temperature_2m || 0),
       precipitation: data.current?.precipitation || 0,
       source: "open-meteo"
@@ -913,7 +985,7 @@ async function getWeather() {
 
   value = {
     city,
-    text: "cloudy",
+    text: "\u591a\u4e91",
     temp: 24,
     source: "mock"
   };
@@ -945,6 +1017,74 @@ async function getLyric(songId) {
   }
 }
 
+function isLocalNeteaseApiBase(base = "") {
+  try {
+    const url = new URL(base || "http://localhost:4000");
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname) && String(url.port || "80") === "4000";
+  } catch {
+    return false;
+  }
+}
+
+function readDesktopConfig() {
+  try {
+    const configPath = path.join(process.env.APPDATA || "", "Claudio AI Radio Desktop", "config.json");
+    if (!existsSync(configPath)) return {};
+    return JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function configuredNeteaseApiProjectPath() {
+  const desktopConfig = readDesktopConfig();
+  return String(
+    process.env.NETEASE_API_PROJECT_PATH
+    || desktopConfig.neteaseApiProjectPath
+    || path.join(path.dirname(__dirname), "api-enhanced")
+  ).trim();
+}
+
+async function isNeteaseApiReachable(base, timeoutMs = 900) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${base.replace(/\/$/, "")}/login/status?timestamp=${Date.now()}`, { cache: "no-store" });
+      if (response.ok) return true;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  return false;
+}
+
+async function ensureLocalNeteaseApi(base) {
+  if (!isLocalNeteaseApiBase(base)) return;
+  if (await isNeteaseApiReachable(base, 300)) return;
+  if (neteaseApiStartupPromise) {
+    await neteaseApiStartupPromise;
+    return;
+  }
+  const apiDir = configuredNeteaseApiProjectPath();
+  const runnerPath = path.join(__dirname, "electron", "netease-api-runner.cjs");
+  if (!existsSync(path.join(apiDir, "package.json")) || !existsSync(runnerPath)) return;
+  if (!neteaseApiProcess || neteaseApiProcess.killed) {
+    neteaseApiProcess = spawn(process.execPath, [runnerPath, apiDir], {
+      cwd: __dirname,
+      env: { ...process.env, PORT: "4000", ELECTRON_RUN_AS_NODE: "1" },
+      stdio: "ignore",
+      windowsHide: true
+    });
+    neteaseApiProcess.on("exit", () => {
+      neteaseApiProcess = null;
+      neteaseApiStartupPromise = null;
+    });
+  }
+  neteaseApiStartupPromise = isNeteaseApiReachable(base, 12000).finally(() => {
+    neteaseApiStartupPromise = null;
+  });
+  await neteaseApiStartupPromise;
+}
+
 async function getSongUrl(songId) {
   if (!songId) return { url: "", source: "none" };
   const level = AUDIO_QUALITY_LEVELS.has(state.audioQuality) ? state.audioQuality : DEFAULT_AUDIO_QUALITY;
@@ -953,6 +1093,7 @@ async function getSongUrl(songId) {
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const base = (process.env.NETEASE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
   const promise = (async () => {
+    await ensureLocalNeteaseApi(base);
     const levels = [level, ...AUDIO_QUALITY_FALLBACK_ORDER.filter((item) => item !== level)];
     const attempts = [];
     let firstPlayable = null;
@@ -1239,6 +1380,102 @@ async function readNeteaseArtistSongs(base, artistId, limit = 50) {
   return [];
 }
 
+function normalizeArtistIntro(source = {}) {
+  const brief = String(source.briefDesc || source.description || "").trim();
+  const lines = Array.isArray(source.introduction) ? source.introduction : [];
+  const introLines = lines
+    .map((item) => {
+      const title = String(item?.ti || "").trim();
+      const text = String(item?.txt || "").trim();
+      if (!text) return "";
+      return title ? `${title}：${text}` : text;
+    })
+    .filter(Boolean);
+  return {
+    summary: brief,
+    introduction: introLines,
+    fullText: [brief, ...introLines].filter(Boolean).join("\n\n")
+  };
+}
+
+async function readNeteaseArtistIntro(base, artistId) {
+  const id = String(artistId || "").trim();
+  if (!/^\d{2,}$/.test(id)) throw new Error("invalid artist id");
+  const detailUrl = addNeteaseCookie(new URL(`${base}/artist/detail`));
+  detailUrl.searchParams.set("id", id);
+  const descUrl = addNeteaseCookie(new URL(`${base}/artist/desc`));
+  descUrl.searchParams.set("id", id);
+  const [detailResponse, descResponse] = await Promise.allSettled([
+    fetch(detailUrl),
+    fetch(descUrl)
+  ]);
+  if (detailResponse.status !== "fulfilled") throw new Error(detailResponse.reason?.message || "/artist/detail request failed");
+  const detailHttp = detailResponse.value;
+  if (!detailHttp.ok) throw new Error(`/artist/detail HTTP ${detailHttp.status}`);
+  const detail = await detailHttp.json();
+  let desc = null;
+  if (descResponse.status === "fulfilled" && descResponse.value?.ok) {
+    try {
+      desc = await descResponse.value.json();
+    } catch {
+      desc = null;
+    }
+  }
+  if (detail.code && detail.code !== 200) {
+    throw new Error(`artist detail API ${detail.code || "unknown"}`);
+  }
+  const artist = detail.data?.artist || detail.artist || {};
+  const intro = normalizeArtistIntro(desc || {});
+  const brief = String(artist.briefDesc || artist.description || "").trim();
+  const description = intro.fullText || brief;
+  return {
+    source: {
+      id,
+      name: artist.name || "NetEase Artist",
+      cover: artist.avatar || artist.cover || "",
+      summary: intro.summary || brief,
+      description,
+      introduction: intro.introduction,
+      alias: Array.isArray(artist.alias) ? artist.alias : [],
+      trackCount: Number(artist.musicSize || artist.albumSize || 0) || 0
+    }
+  };
+}
+
+async function resolveNeteaseArtistIdByName(base, artistName) {
+  const name = String(artistName || "").trim();
+  if (!name) return "";
+  const url = addNeteaseCookie(new URL(`${base}/search`));
+  url.searchParams.set("keywords", name);
+  url.searchParams.set("type", "100");
+  url.searchParams.set("limit", "10");
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`/search HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.code && data.code !== 200) throw new Error(`/search API ${data.code}`);
+  const artists = data.result?.artists || [];
+  if (!Array.isArray(artists) || !artists.length) return "";
+  const normalize = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+  const target = normalize(name);
+  const exact = artists.find((item) => normalize(item.name) === target);
+  return String((exact || artists[0] || {}).id || "").trim();
+}
+
+async function readNeteaseArtistIntroByNameOrId(base, artistId, artistName) {
+  const id = String(artistId || "").trim();
+  const name = String(artistName || "").trim();
+  if (/^\d{2,}$/.test(id)) {
+    try {
+      return await readNeteaseArtistIntro(base, id);
+    } catch (error) {
+      if (!name) throw error;
+    }
+  }
+  const resolvedId = await resolveNeteaseArtistIdByName(base, name || id);
+  if (!resolvedId) throw new Error("artist not found");
+  return readNeteaseArtistIntro(base, resolvedId);
+}
+
 function neteaseSongTags(song = {}) {
   const tags = [];
   const reason = song.recommendReason || song.reason || song.rcmdReason || song.algReason || "";
@@ -1517,6 +1754,171 @@ async function readNeteaseAlbumTracksForSong(base, songId) {
   return readNeteaseAlbumTracks(base, albumId);
 }
 
+const neteaseSongDetailCache = new Map();
+let playbackMetadataRepairing = false;
+
+function looksCorruptText(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (/\?{2,}/.test(text)) return true;
+  const compact = text.replace(/[\s.·_/()[\]{}:：,，。'"!！-]+/g, "");
+  if (compact && /^\?+$/.test(compact)) return true;
+  if (text.includes("\uFFFD")) return true;
+  return /[鎾鎶鎵浠鍗绉闆涓銇銈雱鞐鐚鑻榛灏鍑霑鈥檙]/.test(text);
+}
+
+function trackNeedsMetadataRepair(track = {}) {
+  const id = String(track.sourceId || track.id || "").trim();
+  if (!/^\d+$/.test(id)) return false;
+  return looksCorruptText(track.title)
+    || looksCorruptText(track.artist)
+    || looksCorruptText(track.album)
+    || !String(track.title || "").trim()
+    || !String(track.artist || "").trim();
+}
+
+function mergeNeteaseDetailTrack(track = {}, detailTrack = null) {
+  if (!detailTrack?.sourceId) return externalNeteaseTrack(track);
+  const original = externalNeteaseTrack(track);
+  return externalNeteaseTrack({
+    ...original,
+    title: detailTrack.title || original.title,
+    artist: detailTrack.artist || original.artist,
+    artistIds: detailTrack.artistIds?.length ? detailTrack.artistIds : original.artistIds,
+    artistId: detailTrack.artistId || original.artistId,
+    album: detailTrack.album || original.album,
+    albumId: detailTrack.albumId || original.albumId,
+    cover: detailTrack.cover || original.cover,
+    duration: detailTrack.duration || original.duration,
+    playlists: original.playlists,
+    playlistId: original.playlistId,
+    playlistName: original.playlistName,
+    libraryPlaylistId: original.libraryPlaylistId,
+    tags: original.tags
+  });
+}
+
+async function fetchNeteaseSongDetailTracks(ids = []) {
+  const uniqueIds = [...new Set(ids.map((id) => String(id || "").trim()).filter((id) => /^\d+$/.test(id)))];
+  const missingIds = uniqueIds.filter((id) => !neteaseSongDetailCache.has(id));
+  if (missingIds.length) {
+    const base = (process.env.NETEASE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
+    for (let index = 0; index < missingIds.length; index += 100) {
+      const chunk = missingIds.slice(index, index + 100);
+      try {
+        const detailUrl = addNeteaseCookie(new URL(`${base}/song/detail`));
+        detailUrl.searchParams.set("ids", chunk.join(","));
+        const response = await fetch(detailUrl);
+        if (!response.ok) throw new Error(`/song/detail HTTP ${response.status}`);
+        const data = await response.json();
+        if (data.code && data.code !== 200) throw new Error(`/song/detail API ${data.code}`);
+        const songs = Array.isArray(data.songs) ? data.songs : [];
+        for (const song of songs) {
+          const sourceId = String(song?.id || "").trim();
+          if (!sourceId) continue;
+          neteaseSongDetailCache.set(sourceId, neteaseSongToTrack(song, { id: "", name: "" }));
+        }
+      } catch (error) {
+        console.warn("[netease] song detail repair failed:", error?.message || error);
+      }
+    }
+  }
+  const result = new Map();
+  for (const id of uniqueIds) {
+    if (neteaseSongDetailCache.has(id)) result.set(id, neteaseSongDetailCache.get(id));
+  }
+  return result;
+}
+
+async function repairTrackListMetadata(tracks = []) {
+  if (!Array.isArray(tracks) || !tracks.length) return { tracks, changed: false };
+  const ids = tracks
+    .filter((track) => trackNeedsMetadataRepair(track))
+    .map((track) => track.sourceId || track.id);
+  if (!ids.length) return { tracks, changed: false };
+  const details = await fetchNeteaseSongDetailTracks(ids);
+  if (!details.size) return { tracks, changed: false };
+  let changed = false;
+  const repaired = tracks.map((track) => {
+    if (!trackNeedsMetadataRepair(track)) return track;
+    const id = String(track.sourceId || track.id || "").trim();
+    const detail = details.get(id);
+    if (!detail) return track;
+    const next = mergeNeteaseDetailTrack(track, detail);
+    if (next.title !== track.title || next.artist !== track.artist || next.album !== track.album || next.cover !== track.cover) {
+      changed = true;
+      return next;
+    }
+    return track;
+  });
+  return { tracks: repaired, changed };
+}
+
+async function repairPlaybackStateMetadata() {
+  if (playbackMetadataRepairing) return;
+  playbackMetadataRepairing = true;
+  try {
+    let changed = false;
+    if (state.tempTrack && trackNeedsMetadataRepair(state.tempTrack)) {
+      const { tracks, changed: tempChanged } = await repairTrackListMetadata([state.tempTrack]);
+      if (tempChanged && tracks[0]) {
+        state.tempTrack = tracks[0];
+        changed = true;
+      }
+    }
+    for (const key of ["sessionPlaylist"]) {
+      if (!state[key]?.tracks?.length) continue;
+      const { tracks, changed: listChanged } = await repairTrackListMetadata(state[key].tracks);
+      if (listChanged) {
+        state[key] = { ...state[key], tracks };
+        changed = true;
+      }
+    }
+    for (const contextKey of ["previousPlaybackContext", "nextPlaybackContext"]) {
+      const context = state[contextKey];
+      if (!context) continue;
+      if (context.tempTrack && trackNeedsMetadataRepair(context.tempTrack)) {
+        const { tracks, changed: tempChanged } = await repairTrackListMetadata([context.tempTrack]);
+        if (tempChanged && tracks[0]) {
+          context.tempTrack = tracks[0];
+          changed = true;
+        }
+      }
+      if (context.sessionPlaylist?.tracks?.length) {
+        const { tracks, changed: listChanged } = await repairTrackListMetadata(context.sessionPlaylist.tracks);
+        if (listChanged) {
+          context.sessionPlaylist = { ...context.sessionPlaylist, tracks };
+          changed = true;
+        }
+      }
+    }
+    if (Array.isArray(state.playStack) && state.playStack.length) {
+      for (const item of state.playStack) {
+        if (item?.track && trackNeedsMetadataRepair(item.track)) {
+          const { tracks, changed: trackChanged } = await repairTrackListMetadata([item.track]);
+          if (trackChanged && tracks[0]) {
+            item.track = tracks[0];
+            changed = true;
+          }
+        }
+        if (item && looksCorruptText(item.playlistName)) {
+          const trackPlaylistName = item.track?.playlistName && !looksCorruptText(item.track.playlistName)
+            ? item.track.playlistName
+            : "";
+          const cleanName = trackPlaylistName
+            || item.track?.playlists?.find((playlist) => playlist?.name && !looksCorruptText(playlist.name))?.name
+            || "";
+          item.playlistName = cleanName;
+          changed = true;
+        }
+      }
+    }
+    if (changed) await savePlaybackState();
+  } finally {
+    playbackMetadataRepairing = false;
+  }
+}
+
 async function readNeteaseRadarPlaylist(base) {
   const { uid } = await getNeteaseProfile(base);
   const listUrl = addNeteaseCookie(new URL(`${base}/user/playlist`));
@@ -1677,6 +2079,7 @@ async function likeNeteaseSong(songId, like = true) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (data.code && data.code !== 200) throw new Error(`API ${data.code}`);
+      setCachedNeteaseLike(id, like);
       return { ...data, uid };
     } catch (error) {
       lastError = error.message;
@@ -1822,6 +2225,50 @@ async function checkNeteaseSongLike(songId) {
   return Boolean(liked[id]);
 }
 
+function getCachedNeteaseLike(songId, { allowStale = false } = {}) {
+  const id = String(songId || "").trim();
+  if (!id) return undefined;
+  const cached = neteaseLikeCache.get(id);
+  if (!cached) return undefined;
+  if (!allowStale && cached.expiresAt <= Date.now()) return undefined;
+  return Boolean(cached.liked);
+}
+
+function setCachedNeteaseLike(songId, liked, ttlMs = NETEASE_LIKE_CACHE_TTL_MS) {
+  const id = String(songId || "").trim();
+  if (!id) return;
+  neteaseLikeCache.set(id, {
+    liked: Boolean(liked),
+    expiresAt: Date.now() + ttlMs
+  });
+}
+
+async function resolveAuthoritativeNeteaseLike(songId) {
+  const id = String(songId || "").trim();
+  if (!id) return undefined;
+  const cached = getCachedNeteaseLike(id);
+  if (typeof cached === "boolean") return cached;
+  try {
+    const liked = await checkNeteaseSongLike(id);
+    setCachedNeteaseLike(id, liked);
+    return liked;
+  } catch {
+    const stale = getCachedNeteaseLike(id, { allowStale: true });
+    if (typeof stale === "boolean") return stale;
+    return undefined;
+  }
+}
+
+async function withAuthoritativeTrackLike(track = null) {
+  if (!track) return track;
+  const songId = String(track.sourceId || track.id || "").trim();
+  if (!songId || !/^\d+$/.test(songId)) return track;
+  const liked = await resolveAuthoritativeNeteaseLike(songId);
+  if (typeof liked === "boolean") return { ...track, liked };
+  if (isLibraryTrack(track)) return { ...track, liked: true };
+  return track;
+}
+
 async function checkNeteaseSongLikes(songIds) {
   const idsToCheck = [...new Set((songIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
   const result = Object.fromEntries(idsToCheck.map((id) => [id, false]));
@@ -1851,21 +2298,45 @@ async function checkNeteaseSongLikes(songIds) {
     // Fall back to the user's full likelist below. Different NCM API forks expose different check routes.
   }
 
-  const statusUrl = addNeteaseCookie(new URL(`${base}/login/status`));
-  const statusResponse = await fetch(statusUrl);
-  if (!statusResponse.ok) return result;
-  const status = await statusResponse.json();
-  const uid = status.data?.profile?.userId || status.profile?.userId || "";
-  if (!uid) return result;
-  const listUrl = addNeteaseCookie(new URL(`${base}/likelist`));
-  listUrl.searchParams.set("uid", String(uid));
-  const listResponse = await fetch(listUrl);
-  if (!listResponse.ok) return result;
-  const data = await listResponse.json();
-  const ids = data.ids || data.data || data.likelist || [];
-  if (!Array.isArray(ids)) return result;
-  const likedIds = new Set(ids.map(String));
-  for (const id of idsToCheck) result[id] = likedIds.has(id);
+  try {
+    const statusUrl = addNeteaseCookie(new URL(`${base}/login/status`));
+    const statusResponse = await fetch(statusUrl);
+    if (statusResponse.ok) {
+      const status = await statusResponse.json();
+      const uid = status.data?.profile?.userId || status.profile?.userId || "";
+      if (uid) {
+        const listUrl = addNeteaseCookie(new URL(`${base}/likelist`));
+        listUrl.searchParams.set("uid", String(uid));
+        const listResponse = await fetch(listUrl);
+        if (listResponse.ok) {
+          const data = await listResponse.json();
+          const ids = data.ids || data.data || data.likelist || [];
+          if (Array.isArray(ids)) {
+            const likedIds = new Set(ids.map(String));
+            for (const id of idsToCheck) result[id] = likedIds.has(id);
+          }
+        }
+      }
+    }
+  } catch {
+    // Keep falling through to playlist-membership fallback.
+  }
+  if (NETEASE_LIBRARY_PLAYLIST_ID) {
+    const unresolvedIds = idsToCheck.filter((id) => !result[id]);
+    if (unresolvedIds.length) {
+      const membershipEntries = await Promise.all(unresolvedIds.map(async (id) => {
+        try {
+          const membership = await checkNeteaseSongInPlaylists(id, [NETEASE_LIBRARY_PLAYLIST_ID]);
+          return [id, Boolean(membership[NETEASE_LIBRARY_PLAYLIST_ID])];
+        } catch {
+          return [id, false];
+        }
+      }));
+      for (const [id, liked] of membershipEntries) {
+        if (liked) result[id] = true;
+      }
+    }
+  }
   return result;
 }
 
@@ -3532,13 +4003,6 @@ async function chooseNextIndex(playlist) {
   if (!playlist?.tracks?.length) return 0;
   const current = state.index % playlist.tracks.length;
   if (state.playbackMode === "repeat-one") return current;
-  if (state.nextSessionPlaylist?.tracks?.length) {
-    state.sessionPlaylist = state.nextSessionPlaylist;
-    state.nextSessionPlaylist = null;
-    state.tempTrack = null;
-    syncPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
-    return 0;
-  }
   state.queue = ensurePlaybackQueueIndexes(playlist, current, state.playbackMode);
   while (state.queue.length) {
     const queued = Number(state.queue.shift());
@@ -3665,18 +4129,22 @@ function activePlaybackPlaylist(playlist) {
       source: "netease-session"
     };
   }
-  return playlist?.tracks?.length ? playlist : EMPTY_PLAYBACK_PLAYLIST;
+  return EMPTY_PLAYBACK_PLAYLIST;
 }
 
 async function currentPayload() {
+  await repairPlaybackStateMetadata();
   const playlist = await loadPlaylist();
-  const activePlaylist = activePlaybackPlaylist(playlist);
-  state.nextTracks = filterPlaybackTracks(state.nextTracks || []);
+  const activePlaylist = state.sequenceCleared ? EMPTY_PLAYBACK_PLAYLIST : activePlaybackPlaylist(playlist);
   const hasTracks = activePlaylist.tracks.length > 0;
   const activeIndex = hasTracks ? state.index % activePlaylist.tracks.length : 0;
-  const track = state.tempTrack || (hasTracks ? activePlaylist.tracks[activeIndex] : EMPTY_TRACK);
-  const firstNextTrack = state.nextTracks?.find((item) => playbackTrackKey(item) !== playbackTrackKey(track)) || null;
-  const nextTrack = firstNextTrack || (hasTracks ? activePlaylist.tracks[(activeIndex + 1) % activePlaylist.tracks.length] : null);
+  const rawTrack = state.tempTrack || (hasTracks ? activePlaylist.tracks[activeIndex] : EMPTY_TRACK);
+  const track = await withAuthoritativeTrackLike(rawTrack);
+  const queueIndexes = hasTracks ? ensurePlaybackQueueIndexes(activePlaylist, activeIndex, state.playbackMode) : [];
+  const rawNextTrack = hasTracks
+    ? activePlaylist.tracks[Number(queueIndexes[0] ?? activeIndex)] || null
+    : null;
+  const nextTrack = await withAuthoritativeTrackLike(rawNextTrack);
   const currentPositionKey = positionTrackKey(track);
   const positionSeconds = state.positionTrackKey === currentPositionKey
     ? Math.max(0, Math.min(Number(track.duration || Infinity), Number(state.positionSeconds || 0)))
@@ -3702,16 +4170,18 @@ async function currentPayload() {
   };
 }
 
-async function currentPayloadWithSequence() {
+const SEQUENCE_PAYLOAD_LIMIT = 100;
+
+async function currentPayloadWithSequence(limit = SEQUENCE_PAYLOAD_LIMIT, offset = 0) {
   return {
     ...(await currentPayload()),
-    sequenceState: await playbackSequence()
+    sequenceState: await playbackSequence(limit, offset)
   };
 }
 
 async function broadcast() {
   await savePlaybackState();
-  const payload = `data: ${JSON.stringify(await currentPayload())}\n\n`;
+  const payload = `data: ${JSON.stringify(await currentPayloadWithSequence())}\n\n`;
   for (const client of clients) client.write(payload);
 }
 
@@ -3724,8 +4194,19 @@ async function parseBody(req) {
 
 function externalNeteaseTrack(track = {}) {
   const sourceId = String(track.sourceId || track.id || "").trim();
+  const firstPlaylist = Array.isArray(track.playlists) ? track.playlists.find((item) => item?.id || item?.name) : null;
+  const rawPlaylistName = String(track.playlistName || track.originPlaylistName || firstPlaylist?.name || "").trim();
+  const playlistName = (looksCorruptText(rawPlaylistName) ? "" : rawPlaylistName).slice(0, 120);
+  const playlistId = String(track.playlistId || track.originPlaylistId || track.libraryPlaylistId || firstPlaylist?.id || "").trim();
+  const playlists = Array.isArray(track.playlists)
+    ? track.playlists.map((playlist) => ({
+      ...playlist,
+      name: looksCorruptText(playlist?.name) ? "" : playlist?.name
+    })).filter((playlist) => playlist?.id || playlist?.name)
+    : [];
   return {
     id: sourceId,
+    sequenceNumber: Math.max(0, Number(track.sequenceNumber || 0)),
     title: String(track.title || "NetEase Song").slice(0, 160),
     artist: String(track.artist || "Unknown Artist").slice(0, 160),
     artistIds: Array.isArray(track.artistIds) ? track.artistIds.map(String).filter(Boolean) : [],
@@ -3738,7 +4219,9 @@ function externalNeteaseTrack(track = {}) {
     sourceIds: sourceId ? [sourceId] : [],
     source: "netease",
     libraryPlaylistId: String(track.libraryPlaylistId || ""),
-    playlists: Array.isArray(track.playlists) ? track.playlists : [],
+    playlistId,
+    playlistName,
+    playlists,
     tags: Array.isArray(track.tags) ? track.tags.slice(0, 3) : [],
     color: "#8fd8ff"
   };
@@ -3758,16 +4241,26 @@ function activePlaybackPointer(playlist) {
   };
 }
 
+function insertedSequenceNumberFromPointer(pointer) {
+  return Math.max(1, Number(pointer?.index || 0) + 2);
+}
+
 function trackSequenceItem(track, index = -1, source = "queue") {
+  const explicitSequenceNumber = Number(track?.sequenceNumber || 0);
   return {
     index,
     source,
+    sequenceNumber: Number.isInteger(explicitSequenceNumber) && explicitSequenceNumber > 0
+      ? explicitSequenceNumber
+      : (Number.isInteger(Number(index)) && Number(index) >= 0 ? Number(index) + 1 : 0),
     title: track?.title || "",
     artist: track?.artist || "",
     album: track?.album || "",
     cover: track?.cover || "",
     sourceId: track?.sourceId || track?.id || "",
-    duration: track?.duration || 0
+    duration: track?.duration || 0,
+    playlistId: track?.playlistId || track?.libraryPlaylistId || "",
+    playlistName: track?.playlistName || ""
   };
 }
 
@@ -3789,29 +4282,274 @@ function pushPlayStack(pointer) {
   state.playStack = state.playStack.slice(-80);
 }
 
-function rotateTempTrackQueueToSourceId(sourceId = "") {
-  const targetId = String(sourceId || "").trim();
-  if (!targetId) return false;
-  const currentKey = playbackTrackKey(state.tempTrack);
-  const tempTracks = [
-    ...(state.tempTrack ? [externalNeteaseTrack(state.tempTrack)] : []),
-    ...filterPlaybackTracks(state.nextTracks || []).map((track) => externalNeteaseTrack(track))
-  ];
-  const uniqueTracks = [];
-  const seen = new Set();
-  for (const track of tempTracks) {
-    const key = playbackTrackKey(track);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    uniqueTracks.push(track);
+function replaceCurrentWithPlaylistIndex(playlist, targetIndex, options = {}) {
+  const tracks = filterPlaybackTracks(playlist?.tracks || []);
+  if (!tracks.length) return null;
+  const total = tracks.length;
+  const nextIndex = ((Number(targetIndex) % total) + total) % total;
+  const currentIndex = ((Number(state.index || 0) % total) + total) % total;
+  const displacedTrack = options.displacedTrack ? externalNeteaseTrack(options.displacedTrack) : null;
+  const displacedKey = playbackTrackKey(displacedTrack);
+  const targetKey = playbackTrackKey(tracks[nextIndex]);
+  const displacedAlreadyInPlaylist = displacedKey
+    ? tracks.some((track, index) => index !== nextIndex && playbackTrackKey(track) === displacedKey)
+    : false;
+  const baseOrder = normalizePlaybackQueueIndexes(playlist, state.queue, currentIndex);
+  const orderedSource = baseOrder.length ? baseOrder : buildPlaybackQueueIndexes(playlist, currentIndex, state.playbackMode);
+  const displayOrder = [currentIndex, ...orderedSource]
+    .filter((index, position, list) => Number.isInteger(index) && index >= 0 && index < total && list.indexOf(index) === position);
+  const targetOrderIndex = displayOrder.indexOf(nextIndex);
+  const rotatedOrder = targetOrderIndex >= 0
+    ? [...displayOrder.slice(targetOrderIndex + 1), ...displayOrder.slice(0, targetOrderIndex)]
+    : [...tracks.keys()].filter((index) => index !== nextIndex);
+  const queueIndexes = [];
+  const addIndex = (index) => {
+    if (!Number.isInteger(index) || index < 0 || index >= total) return;
+    if (index === nextIndex || queueIndexes.includes(index)) return;
+    queueIndexes.push(index);
+  };
+  for (const index of rotatedOrder) addIndex(Number(index));
+  if (displacedTrack && displacedKey !== targetKey && !displacedAlreadyInPlaylist) {
+    const nextTracks = [...tracks, displacedTrack];
+    state.sessionPlaylist = {
+      id: String(playlist?.playlist?.id || playlist?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(playlist?.playlist?.name || playlist?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      tracks: nextTracks
+    };
+    queueIndexes.push(nextTracks.length - 1);
   }
-  const targetIndex = uniqueTracks.findIndex((track) => String(track.sourceId || track.id || "") === targetId);
-  if (targetIndex < 0) return false;
-  const rotated = [...uniqueTracks.slice(targetIndex), ...uniqueTracks.slice(0, targetIndex)];
-  const [nextCurrent, ...rest] = rotated;
-  state.tempTrack = nextCurrent || null;
-  state.nextTracks = rest.filter((track) => playbackTrackKey(track) !== currentKey);
-  return true;
+  state.tempTrack = null;
+  state.index = nextIndex;
+  state.queue = queueIndexes;
+  return (state.sessionPlaylist?.tracks || tracks)[nextIndex] || null;
+}
+
+function appendTrackToPlaybackQueueTail(basePlaylist, track) {
+  const sourceTracks = filterPlaybackTracks(basePlaylist?.tracks || []);
+  const nextTrack = track ? externalNeteaseTrack(track) : null;
+  if (!nextTrack) return basePlaylist || null;
+  const nextKey = playbackTrackKey(nextTrack);
+  const mergedTracks = sourceTracks.filter((item) => playbackTrackKey(item) !== nextKey);
+  mergedTracks.push(nextTrack);
+  const renumberedTracks = mergedTracks.map((item, index) => ({
+    ...item,
+    sequenceNumber: index + 1
+  }));
+  const sourcePlaylist = basePlaylist?.playlist || {};
+  return {
+    ...basePlaylist,
+    playlist: {
+      id: String(sourcePlaylist.id || basePlaylist?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || basePlaylist?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: renumberedTracks.length
+    },
+    tracks: renumberedTracks,
+    source: basePlaylist?.source || "netease-session"
+  };
+}
+
+function appendCurrentTempTrackToTail(basePlaylist, track, explicitSequenceNumber = 0) {
+  const tempTrack = track ? externalNeteaseTrack(track) : null;
+  if (!tempTrack) return null;
+  const sourceTracks = filterPlaybackTracks(basePlaylist?.tracks || []);
+  const nextKey = playbackTrackKey(tempTrack);
+  const mergedTracks = sourceTracks.filter((item) => playbackTrackKey(item) !== nextKey);
+  mergedTracks.push(tempTrack);
+  const renumberedTracks = mergedTracks.map((item, index) => ({
+    ...item,
+    sequenceNumber: index + 1
+  }));
+  const sourcePlaylist = basePlaylist?.playlist || {};
+  state.sessionPlaylist = {
+    ...basePlaylist,
+    playlist: {
+      id: String(sourcePlaylist.id || basePlaylist?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || basePlaylist?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: renumberedTracks.length
+    },
+    tracks: renumberedTracks,
+    source: basePlaylist?.source || "netease-session"
+  };
+  return state.sessionPlaylist;
+}
+
+function createSessionPlaylistFromBase(basePlaylist) {
+  const sourceTracks = filterPlaybackTracks(basePlaylist?.tracks || []);
+  const renumberedTracks = sourceTracks.map((item, index) => ({
+    ...externalNeteaseTrack(item),
+    sequenceNumber: index + 1
+  }));
+  const sourcePlaylist = basePlaylist?.playlist || {};
+  return {
+    ...basePlaylist,
+    playlist: {
+      id: String(sourcePlaylist.id || basePlaylist?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || basePlaylist?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: renumberedTracks.length
+    },
+    tracks: renumberedTracks,
+    source: basePlaylist?.source || "netease-session"
+  };
+}
+
+function insertTrackIntoPlaybackQueueAfterCurrent(basePlaylist, track, currentIndex = state.index) {
+  const nextTrack = track ? externalNeteaseTrack(track) : null;
+  if (!nextTrack) return { playlist: basePlaylist || null, insertedIndex: -1 };
+  const prepared = createSessionPlaylistFromBase(basePlaylist);
+  const tracks = filterPlaybackTracks(prepared?.tracks || []);
+  const total = tracks.length;
+  const normalizedCurrent = total ? ((Number(currentIndex) % total) + total) % total : 0;
+  const nextKey = playbackTrackKey(nextTrack);
+  const withoutDuplicate = tracks.filter((item) => playbackTrackKey(item) !== nextKey);
+  const duplicateIndex = tracks.findIndex((item) => playbackTrackKey(item) === nextKey);
+  let insertAt = Math.min(withoutDuplicate.length, normalizedCurrent + 1);
+  if (duplicateIndex >= 0 && duplicateIndex <= normalizedCurrent) {
+    insertAt = Math.max(0, insertAt - 1);
+  }
+  withoutDuplicate.splice(insertAt, 0, nextTrack);
+  const renumberedTracks = withoutDuplicate.map((item, index) => ({
+    ...externalNeteaseTrack(item),
+    sequenceNumber: index + 1
+  }));
+  const sourcePlaylist = prepared?.playlist || {};
+  state.sessionPlaylist = {
+    ...prepared,
+    playlist: {
+      id: String(sourcePlaylist.id || prepared?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || prepared?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: renumberedTracks.length
+    },
+    tracks: renumberedTracks,
+    source: prepared?.source || "netease-session"
+  };
+  return { playlist: state.sessionPlaylist, insertedIndex: insertAt };
+}
+
+function replaceCurrentWithExternalTrackAndKeepQueue(basePlaylist, track, currentIndex = state.index) {
+  const nextTrack = track ? externalNeteaseTrack(track) : null;
+  const prepared = createSessionPlaylistFromBase(basePlaylist);
+  const tracks = filterPlaybackTracks(prepared?.tracks || []);
+  if (!nextTrack || !tracks.length) {
+    return { playlist: prepared, currentIndex: Math.max(0, Number(currentIndex || 0)), currentTrack: nextTrack };
+  }
+  const total = tracks.length;
+  const normalizedCurrent = ((Number(currentIndex) % total) + total) % total;
+  const displacedTrack = externalNeteaseTrack(tracks[normalizedCurrent]);
+  const displacedKey = playbackTrackKey(displacedTrack);
+  const nextKey = playbackTrackKey(nextTrack);
+  if (nextKey && displacedKey && nextKey === displacedKey) {
+    state.sessionPlaylist = prepared;
+    state.queue = buildPlaybackQueueIndexes(prepared, normalizedCurrent, state.playbackMode);
+    return {
+      playlist: state.sessionPlaylist,
+      currentIndex: normalizedCurrent,
+      currentTrack: displacedTrack
+    };
+  }
+  const orderedIndexes = [
+    normalizedCurrent,
+    ...ensurePlaybackQueueIndexes(prepared, normalizedCurrent, state.playbackMode)
+  ].filter((index, position, list) => list.indexOf(index) === position);
+  const orderedTracks = orderedIndexes
+    .map((index) => externalNeteaseTrack(tracks[index]))
+    .filter(Boolean);
+  const currentSequenceNumber = Math.max(
+    1,
+    Number(displacedTrack.sequenceNumber || normalizedCurrent + 1 || 1)
+  );
+  const shiftedTracks = orderedTracks
+    .slice(1)
+    .filter((item) => playbackTrackKey(item) !== nextKey)
+    .map((item) => {
+      const existingSequence = Math.max(1, Number(item.sequenceNumber || 0));
+      return {
+        ...externalNeteaseTrack(item),
+        sequenceNumber: existingSequence > currentSequenceNumber
+          ? existingSequence + 1
+          : existingSequence
+      };
+    });
+  const mergedTracks = [
+    {
+      ...nextTrack,
+      sequenceNumber: currentSequenceNumber + 1
+    },
+    ...shiftedTracks,
+    {
+      ...displacedTrack,
+      sequenceNumber: currentSequenceNumber
+    }
+  ].map((item) => externalNeteaseTrack(item));
+  const sourcePlaylist = prepared?.playlist || {};
+  state.sessionPlaylist = {
+    ...prepared,
+    playlist: {
+      id: String(sourcePlaylist.id || prepared?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || prepared?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: mergedTracks.length
+    },
+    tracks: mergedTracks,
+    source: prepared?.source || "netease-session"
+  };
+  state.index = 0;
+  state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
+  return {
+    playlist: state.sessionPlaylist,
+    currentIndex: 0,
+    currentTrack: state.sessionPlaylist.tracks[0]
+  };
+}
+
+function appendTracksIntoPlaybackQueueAfterCurrent(basePlaylist, tracks = [], currentIndex = state.index) {
+  const prepared = createSessionPlaylistFromBase(basePlaylist);
+  const baseTracks = filterPlaybackTracks(prepared?.tracks || []);
+  const appendTracks = filterPlaybackTracks(tracks || []).map((track) => externalNeteaseTrack(track));
+  if (!baseTracks.length || !appendTracks.length) {
+    return { playlist: prepared, currentIndex: Math.max(0, Number(currentIndex || 0)) };
+  }
+  const total = baseTracks.length;
+  const normalizedCurrent = ((Number(currentIndex) % total) + total) % total;
+  const appendKeys = new Set(appendTracks.map((track) => playbackTrackKey(track)).filter(Boolean));
+  const beforeTracks = baseTracks.slice(0, normalizedCurrent + 1);
+  const afterTracks = baseTracks
+    .slice(normalizedCurrent + 1)
+    .filter((track) => !appendKeys.has(playbackTrackKey(track)));
+  const mergedTracks = [
+    ...beforeTracks,
+    ...appendTracks.filter((track, index, list) => {
+      const key = playbackTrackKey(track);
+      return key && list.findIndex((item) => playbackTrackKey(item) === key) === index;
+    }),
+    ...afterTracks
+  ].map((track) => externalNeteaseTrack(track));
+  const renumberedTracks = mergedTracks.map((item, index) => ({
+    ...externalNeteaseTrack(item),
+    sequenceNumber: index + 1
+  }));
+  const sourcePlaylist = prepared?.playlist || {};
+  state.sessionPlaylist = {
+    ...prepared,
+    playlist: {
+      id: String(sourcePlaylist.id || prepared?.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || prepared?.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: renumberedTracks.length
+    },
+    tracks: renumberedTracks,
+    source: prepared?.source || "netease-session"
+  };
+  return { playlist: state.sessionPlaylist, currentIndex: normalizedCurrent };
 }
 
 function playbackTrackKey(track) {
@@ -3851,8 +4589,13 @@ function buildPlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.play
 
 function ensurePlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.playbackMode || "sequence") {
   const normalized = normalizePlaybackQueueIndexes(playlist, state.queue, currentIndex);
-  if (normalized.length) return normalized;
-  return buildPlaybackQueueIndexes(playlist, currentIndex, mode);
+  const fallback = buildPlaybackQueueIndexes(playlist, currentIndex, mode);
+  if (!normalized.length) return fallback;
+  const merged = [...normalized];
+  for (const index of fallback) {
+    if (!merged.includes(index)) merged.push(index);
+  }
+  return merged;
 }
 
 function syncPlaybackQueueIndexes(playlist, currentIndex = 0, mode = state.playbackMode || "sequence") {
@@ -3885,9 +4628,7 @@ function hasPlaybackContext(context) {
   return Boolean(
     context?.tempTrack ||
     context?.sessionPlaylist?.tracks?.length ||
-    context?.nextSessionPlaylist?.tracks?.length ||
-    context?.queue?.length ||
-    context?.nextTracks?.length
+    context?.queue?.length
   );
 }
 
@@ -3898,10 +4639,9 @@ function playbackContextSnapshot(reason = "replace") {
     index: Number(state.index || 0),
     playing: Boolean(state.playing),
     queue: clonePlaybackValue(state.queue || []),
-    nextTracks: clonePlaybackValue(state.nextTracks || []),
     tempTrack: clonePlaybackValue(state.tempTrack || null),
     sessionPlaylist: clonePlaybackValue(state.sessionPlaylist || null),
-    nextSessionPlaylist: clonePlaybackValue(state.nextSessionPlaylist || null),
+    sequenceCleared: Boolean(state.sequenceCleared),
     playbackMode: state.playbackMode || "sequence"
   };
 }
@@ -3910,10 +4650,9 @@ function applyPlaybackContext(context) {
   state.index = Number(context.index || 0);
   state.playing = Boolean(context.playing);
   state.queue = clonePlaybackValue(context.queue || []);
-  state.nextTracks = clonePlaybackValue(context.nextTracks || []);
   state.tempTrack = clonePlaybackValue(context.tempTrack || null);
   state.sessionPlaylist = clonePlaybackValue(context.sessionPlaylist || null);
-  state.nextSessionPlaylist = clonePlaybackValue(context.nextSessionPlaylist || null);
+  state.sequenceCleared = Boolean(context.sequenceCleared);
   state.playbackMode = context.playbackMode || state.playbackMode || "sequence";
 }
 
@@ -3946,12 +4685,46 @@ function restoreNextPlaybackContext() {
 }
 
 async function playbackSequence(limit = 600, offset = 0) {
+  await repairPlaybackStateMetadata();
   const playlist = await loadPlaylist();
   const activePlaylist = activePlaybackPlaylist(playlist);
   const current = activePlaybackPointer(playlist);
+  if (state.sequenceCleared) {
+    return {
+      playbackMode: state.playbackMode,
+      playlistName: current.playlistName,
+      canUndoPlaylist: hasPlaybackContext(state.previousPlaybackContext),
+      canRedoPlaylist: hasPlaybackContext(state.nextPlaybackContext),
+      queuedCount: 0,
+      totalCount: 0,
+      offset: Math.max(0, Number(offset || 0)),
+      returned: 0,
+      items: []
+    };
+  }
   const currentKey = current.track ? playbackTrackKey(current.track) : "";
   const currentLabel = current.source === "temp" ? "Chat \u63d2\u64ad" : "\u6b63\u5728\u64ad\u653e";
-  const items = current.track ? [{ ...trackSequenceItem(current.track, current.index, "current"), label: currentLabel }] : [];
+  const currentSequenceNumber = current.source === "temp"
+    ? Math.max(
+      1,
+      Number(
+        state.tempTrackSequenceNumber
+        || current.track?.sequenceNumber
+        || current.index + 1
+        || 1
+      )
+    )
+    : Math.max(1, Number(current.track?.sequenceNumber || current.index + 1 || 1));
+  const items = current.track
+    ? [{ ...trackSequenceItem({ ...current.track, sequenceNumber: currentSequenceNumber }, current.index, "current"), label: currentLabel }]
+    : [];
+  const playlistLabelForTrack = (track, fallback = "") => (
+    track?.playlistName ||
+    activePlaylist.playlist?.name ||
+    activePlaylist.name ||
+    fallback ||
+    "\u64ad\u653e\u5217\u8868"
+  );
   const seenKeys = new Set();
   const pushUnique = (item, key) => {
     if (!item || !key) return;
@@ -3959,33 +4732,18 @@ async function playbackSequence(limit = 600, offset = 0) {
     seenKeys.add(key);
     items.push(item);
   };
-  for (const track of filterPlaybackTracks(state.nextTracks || [])) {
-    pushUnique({ ...trackSequenceItem(track, -1, "next"), label: "\u4e0b\u4e00\u9996\u64ad\u653e" }, playbackTrackKey(track));
-  }
-  for (const index of state.queue || []) {
-    const track = activePlaylist.tracks[Number(index)];
-    if (track) pushUnique({ ...trackSequenceItem(track, Number(index), "queue"), label: "\u64ad\u653e\u961f\u5217" }, playbackTrackKey(track));
-  }
-  for (const track of filterPlaybackTracks(state.nextSessionPlaylist?.tracks || [])) {
-    pushUnique({ ...trackSequenceItem(track, -1, "chat"), label: state.nextSessionPlaylist?.name || "\u64ad\u653e\u961f\u5217" }, playbackTrackKey(track));
-  }
   const queueIndexes = ensurePlaybackQueueIndexes(activePlaylist, current.index, state.playbackMode);
   for (const index of queueIndexes) {
     const track = activePlaylist.tracks[Number(index)];
     if (!track) continue;
     pushUnique(
-      { ...trackSequenceItem(track, Number(index), "library"), label: activePlaylist.playlist?.name || activePlaylist.name || "\u64ad\u653e\u5217\u8868" },
+      { ...trackSequenceItem(track, Number(index), "library"), label: playlistLabelForTrack(track, "\u64ad\u653e\u5217\u8868") },
       playbackTrackKey(track)
     );
   }
   const safeLimit = Math.max(1, Number(limit || 0));
   const safeOffset = Math.max(0, Number(offset || 0));
-  const visibleItems = items
-    .map((item, index) => ({
-      ...item,
-      sequenceNumber: index + 1
-    }))
-    .slice(safeOffset, safeOffset + safeLimit);
+  const visibleItems = items.slice(safeOffset, safeOffset + safeLimit);
   return {
     playbackMode: state.playbackMode,
     playlistName: current.playlistName,
@@ -4004,19 +4762,13 @@ async function deleteSequenceEntry(body = {}) {
   const activePlaylist = activePlaybackPlaylist(playlist);
   const current = activePlaybackPointer(playlist);
   if (body?.clearAll) {
-    const currentTrack = current?.track;
-    if (!currentTrack) return false;
     state.tempTrack = null;
-    state.sessionPlaylist = {
-      id: "cleared-sequence",
-      name: "播放队列",
-      tracks: [externalNeteaseTrack(currentTrack)]
-    };
-    state.nextSessionPlaylist = null;
-    state.nextTracks = [];
+    state.sessionPlaylist = null;
+    state.sequenceCleared = true;
+    state.playing = false;
     state.queue = [];
     state.index = 0;
-    resetPlaybackPosition(state.sessionPlaylist.tracks[0]);
+    resetPlaybackPosition(null);
     return true;
   }
   const source = String(body.source || "").trim();
@@ -4024,50 +4776,52 @@ async function deleteSequenceEntry(body = {}) {
   const normalizedIndex = Number.isInteger(index) ? index : -1;
   const sourceId = String(body.sourceId || "").trim();
   if (!source || source === "current") return false;
-
-  let changed = false;
-  const sameTrack = (track) => {
-    if (!track) return false;
-    const trackId = String(track.sourceId || track.id || "").trim();
+  if (!activePlaylist.tracks.length) return false;
+  const currentIndex = Number(current.index || 0);
+  const removeIndex = activePlaylist.tracks.findIndex((track, trackIndex) => {
+    const trackId = String(track?.sourceId || track?.id || "").trim();
+    if (trackIndex === currentIndex) return false;
     if (sourceId && trackId) return trackId === sourceId;
-    return false;
+    return trackIndex === normalizedIndex;
+  });
+  if (removeIndex < 0) return false;
+
+  const removedTrack = activePlaylist.tracks[removeIndex];
+  const removedSequence = Math.max(1, Number(removedTrack?.sequenceNumber || removeIndex + 1 || 1));
+  const nextTracks = activePlaylist.tracks
+    .filter((_, trackIndex) => trackIndex !== removeIndex)
+    .map((track, trackIndex) => {
+      const explicitSequence = Math.max(1, Number(track?.sequenceNumber || trackIndex + 1 || 1));
+      return {
+        ...externalNeteaseTrack(track),
+        sequenceNumber: explicitSequence > removedSequence ? explicitSequence - 1 : explicitSequence
+      };
+    });
+
+  const nextIndex = removeIndex < currentIndex ? currentIndex - 1 : currentIndex;
+  const rawQueue = Array.isArray(state.queue) ? [...state.queue] : [];
+  const shiftedQueue = rawQueue
+    .map((queuedIndex) => Number(queuedIndex))
+    .filter((queuedIndex) => Number.isInteger(queuedIndex) && queuedIndex >= 0 && queuedIndex !== removeIndex)
+    .map((queuedIndex) => queuedIndex > removeIndex ? queuedIndex - 1 : queuedIndex);
+
+  const sourcePlaylist = activePlaylist?.playlist || {};
+  state.sessionPlaylist = {
+    ...activePlaylist,
+    playlist: {
+      id: String(sourcePlaylist.id || activePlaylist.id || state.sessionPlaylist?.id || "netease-session"),
+      name: String(sourcePlaylist.name || activePlaylist.name || state.sessionPlaylist?.name || "NetEase Queue").slice(0, 80),
+      creator: String(sourcePlaylist.creator || "Local").slice(0, 80),
+      cover: String(sourcePlaylist.cover || "").slice(0, 500),
+      trackCount: nextTracks.length
+    },
+    tracks: nextTracks,
+    source: "netease-session"
   };
-
-  if (source === "next") {
-    const before = state.nextTracks?.length || 0;
-    state.nextTracks = filterPlaybackTracks(state.nextTracks || []).filter((track) => !sameTrack(track));
-    changed = (state.nextTracks.length !== before);
-  } else if (source === "queue") {
-    const queue = Array.isArray(state.queue) ? [...state.queue] : [];
-    const removeAt = queue.findIndex((queuedIndex) => Number(queuedIndex) === normalizedIndex);
-    if (removeAt >= 0) {
-      queue.splice(removeAt, 1);
-      state.queue = queue;
-      changed = true;
-    }
-  } else if (source === "chat") {
-    const tracks = filterPlaybackTracks(state.nextSessionPlaylist?.tracks || []);
-    const nextTracks = tracks.filter((track) => !sameTrack(track));
-    if (nextTracks.length !== tracks.length) {
-      state.nextSessionPlaylist = nextTracks.length
-        ? { ...(state.nextSessionPlaylist || {}), tracks: nextTracks }
-        : null;
-      changed = true;
-    }
-  } else if (source === "library") {
-    if (!activePlaylist.tracks.length) return false;
-    const queue = [];
-    const total = activePlaylist.tracks.length;
-    for (let offset = 1; offset < total; offset += 1) {
-      const futureIndex = (current.index + offset) % total;
-      if (futureIndex === normalizedIndex) continue;
-      queue.push(futureIndex);
-    }
-    state.queue = queue;
-    changed = true;
-  }
-
-  return changed;
+  state.index = Math.max(0, Math.min(nextIndex, Math.max(0, nextTracks.length - 1)));
+  state.queue = shiftedQueue;
+  state.queue = ensurePlaybackQueueIndexes(state.sessionPlaylist, state.index, state.playbackMode);
+  return true;
 }
 
 async function handleApi(req, res, pathname) {
@@ -4078,12 +4832,18 @@ async function handleApi(req, res, pathname) {
       connection: "keep-alive"
     });
     clients.add(res);
-    res.write(`data: ${JSON.stringify(await currentPayload())}\n\n`);
+    res.write(`data: ${JSON.stringify(await currentPayloadWithSequence())}\n\n`);
     req.on("close", () => clients.delete(res));
     return;
   }
 
-  if (req.method === "GET" && pathname === "/api/now") return json(res, await currentPayload());
+  if (req.method === "POST" && pathname === "/api/debug-log") {
+    const body = await parseBody(req);
+    await appendDebugLog(body);
+    return json(res, { ok: true });
+  }
+
+  if (req.method === "GET" && pathname === "/api/now") return json(res, await currentPayloadWithSequence());
   if (req.method === "GET" && pathname === "/api/sequence") {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const limit = Number(url.searchParams.get("limit") || 600);
@@ -4092,7 +4852,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "DELETE" && pathname === "/api/sequence") {
     const body = await parseBody(req);
-    rememberPlaybackContext("sequence-delete");
+    if (!body?.clearAll) rememberPlaybackContext("sequence-delete");
     const changed = await deleteSequenceEntry(body);
     if (!changed) return json(res, await currentPayload());
     await broadcast();
@@ -4104,7 +4864,7 @@ async function handleApi(req, res, pathname) {
     port: PORT,
     hasClaudeKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY),
     hasDeepSeekKey: Boolean(process.env.DEEPSEEK_API_KEY),
-    hasNeteaseCookie: Boolean(process.env.NETEASE_COOKIE),
+    hasNeteaseCookie: Boolean(configuredNeteaseCookie()),
     aiProvider: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY
       ? "claude"
       : process.env.DEEPSEEK_API_KEY
@@ -4116,8 +4876,7 @@ async function handleApi(req, res, pathname) {
   });
   if (req.method === "GET" && pathname === "/api/taste") return json(res, await getTaste());
   if (req.method === "GET" && pathname === "/api/library") {
-    const basePlaylist = await loadPlaylist();
-    const playlist = activePlaybackPlaylist(basePlaylist);
+    const playlist = await loadPlaylist();
     const url = new URL(req.url, `http://${req.headers.host}`);
     const query = normalizeText(url.searchParams.get("q") || "");
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 80)));
@@ -4159,9 +4918,8 @@ async function handleApi(req, res, pathname) {
     const tracks = playlist.tracks || [];
     rememberPlaybackContext("use-local-playlist");
     state.sessionPlaylist = null;
-    state.nextSessionPlaylist = null;
     state.tempTrack = null;
-    state.nextTracks = [];
+    state.sequenceCleared = false;
     state.queue = [];
     state.index = tracks.length ? Math.min(Math.max(0, Number(state.index || 0)), tracks.length - 1) : 0;
     state.playing = false;
@@ -4178,7 +4936,10 @@ async function handleApi(req, res, pathname) {
     });
   }
   if (req.method === "GET" && pathname === "/api/desktop-lyrics") {
-    return json(res, await currentDesktopLyrics());
+    return json(res, {
+      ...(await currentDesktopLyrics()),
+      enabled: Boolean(state.desktopLyricsEnabled)
+    });
   }
   if (req.method === "POST" && pathname === "/api/desktop-lyrics") {
     const body = await parseBody(req);
@@ -4194,10 +4955,31 @@ async function handleApi(req, res, pathname) {
     return json(res, { ok: true });
   }
   if (req.method === "POST" && pathname === "/api/desktop-lyrics/open") {
-    return json(res, openDesktopLyricsOverlay());
+    const result = openDesktopLyricsOverlay();
+    if (result?.ok) {
+      await setDesktopLyricsEnabled(true);
+      await broadcast();
+    }
+    return json(res, {
+      ...result,
+      enabled: Boolean(state.desktopLyricsEnabled)
+    });
   }
   if (req.method === "POST" && pathname === "/api/desktop-lyrics/close") {
-    return json(res, closeDesktopLyricsOverlay());
+    const result = closeDesktopLyricsOverlay();
+    await setDesktopLyricsEnabled(false);
+    await broadcast();
+    return json(res, {
+      ...result,
+      enabled: Boolean(state.desktopLyricsEnabled)
+    });
+  }
+  if (req.method === "POST" && pathname === "/api/desktop-lyrics/shutdown") {
+    const result = closeDesktopLyricsOverlay();
+    return json(res, {
+      ...result,
+      enabled: Boolean(state.desktopLyricsEnabled)
+    });
   }
   if (req.method === "GET" && pathname === "/api/audio-quality") {
     return json(res, {
@@ -4275,6 +5057,17 @@ async function handleApi(req, res, pathname) {
       returned: songs.length,
       recommendations: neteaseRecommendations(songs)
     });
+  }
+  if (req.method === "GET" && pathname === "/api/netease-artist-intro") {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const id = String(url.searchParams.get("id") || "").trim();
+    const name = String(url.searchParams.get("name") || url.searchParams.get("artist") || "").trim();
+    const base = (process.env.NETEASE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
+    try {
+      return json(res, await readNeteaseArtistIntroByNameOrId(base, id, name));
+    } catch (error) {
+      return json(res, { error: error.message || "artist not found" }, 404);
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/netease-dynamic") {
@@ -4414,10 +5207,12 @@ async function handleApi(req, res, pathname) {
     const ids = url.searchParams.get("ids");
     if (ids) {
       const values = ids.split(",").map((item) => item.trim()).filter(Boolean);
-      return json(res, { liked: await checkNeteaseSongLikes(values) });
+      const liked = await checkNeteaseSongLikes(values);
+      for (const [songId, value] of Object.entries(liked)) setCachedNeteaseLike(songId, value);
+      return json(res, { liked });
     }
     const id = url.searchParams.get("id");
-    const liked = await checkNeteaseSongLike(id);
+    const liked = await resolveAuthoritativeNeteaseLike(id);
     return json(res, { liked, id });
   }
   if (req.method === "POST" && pathname === "/api/netease-import-dynamic") {
@@ -4474,14 +5269,6 @@ async function handleApi(req, res, pathname) {
         ? body.playbackMode
         : state.playbackMode;
       body.playbackMode = nextMode;
-      const playlist = await loadPlaylist();
-      const activePlaylist = activePlaybackPlaylist(playlist);
-      const activeIndex = activePlaylist.tracks.length ? state.index % activePlaylist.tracks.length : 0;
-      if (activePlaylist.tracks.length) {
-        state.queue = buildPlaybackQueueIndexes(activePlaylist, activeIndex, nextMode);
-      } else {
-        state.queue = [];
-      }
     }
     state = { ...state, ...body };
     await broadcast();
@@ -4491,28 +5278,14 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/next") {
     const playlist = await loadPlaylist();
     pushPlayStack(activePlaybackPointer(playlist));
-    const activePlaylist = activePlaybackPlaylist(playlist);
-    state.nextTracks = filterPlaybackTracks(state.nextTracks || []);
-    if (state.tempTrack && state.nextTracks?.length) {
-      const currentTempKey = playbackTrackKey(state.tempTrack);
-      while (state.nextTracks.length && playbackTrackKey(state.nextTracks[0]) === currentTempKey) {
-        state.nextTracks.shift();
-      }
-    }
-    if (state.nextTracks?.length) {
-      const previousTempTrack = state.tempTrack ? externalNeteaseTrack(state.tempTrack) : null;
-      const nextTempTrack = state.nextTracks.shift();
-      if (previousTempTrack && playbackTrackKey(previousTempTrack) !== playbackTrackKey(nextTempTrack)) {
-        state.nextTracks.push(previousTempTrack);
-      }
-      state.tempTrack = nextTempTrack;
-      state.lastHostLine = "";
-      resetPlaybackPosition(state.tempTrack);
-      fillTempHostLineAsync(state.tempTrack);
-      await broadcast();
-      return json(res, await currentPayload());
+    let activePlaylist = activePlaybackPlaylist(playlist);
+    if (state.tempTrack) {
+      appendCurrentTempTrackToTail(state.sessionPlaylist || activePlaylist, state.tempTrack, state.tempTrackSequenceNumber);
+      activePlaylist = activePlaybackPlaylist(playlist);
+      state.queue = buildPlaybackQueueIndexes(activePlaylist, state.index, state.playbackMode);
     }
     state.tempTrack = null;
+    state.tempTrackSequenceNumber = 0;
     if (!activePlaylist.tracks.length) {
       state.playing = false;
       state.index = 0;
@@ -4536,14 +5309,8 @@ async function handleApi(req, res, pathname) {
     const previous = state.playStack?.pop();
     if (previous?.track) {
       if (previous.source === "temp") {
-        const displacedTempTrack = state.tempTrack ? externalNeteaseTrack(state.tempTrack) : null;
         state.tempTrack = previous.track;
-        if (displacedTempTrack && playbackTrackKey(displacedTempTrack) !== playbackTrackKey(state.tempTrack)) {
-          state.nextTracks = [
-            displacedTempTrack,
-            ...filterPlaybackTracks(state.nextTracks || []).filter((track) => playbackTrackKey(track) !== playbackTrackKey(displacedTempTrack))
-          ];
-        }
+        state.tempTrackSequenceNumber = Math.max(1, Number(previous.track?.sequenceNumber || state.tempTrackSequenceNumber || previous.index + 1 || 1));
       } else {
         if (previous.sessionId && state.sessionPlaylist?.id !== previous.sessionId) {
           state.sessionPlaylist = {
@@ -4553,9 +5320,9 @@ async function handleApi(req, res, pathname) {
           };
         } else if (!previous.sessionId) {
           state.sessionPlaylist = null;
-          state.nextSessionPlaylist = null;
         }
         state.tempTrack = null;
+        state.tempTrackSequenceNumber = 0;
         state.index = Number.isInteger(previous.index) ? previous.index : state.index;
         const restoredPlaylist = state.sessionPlaylist || activePlaylist;
         const baseQueue = buildPlaybackQueueIndexes(restoredPlaylist, state.index, state.playbackMode);
@@ -4582,6 +5349,7 @@ async function handleApi(req, res, pathname) {
     }
     if (!activePlaylist.tracks.length) {
       state.tempTrack = null;
+      state.tempTrackSequenceNumber = 0;
       state.playing = false;
       state.index = 0;
       state.lastHostLine = "";
@@ -4589,6 +5357,7 @@ async function handleApi(req, res, pathname) {
       return json(res, await currentPayload());
     }
     state.tempTrack = null;
+    state.tempTrackSequenceNumber = 0;
     state.index = await choosePreviousIndex(activePlaylist);
     state.lastHostLine = "";
     resetPlaybackPosition(activePlaylist.tracks[state.index]);
@@ -4611,20 +5380,27 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/play-batch") {
     const body = await parseBody(req);
+    const batchName = String(body.name || "NetEase Queue").slice(0, 80);
+    const batchId = String(body.id || "netease-session");
     const playlist = await loadPlaylist();
     const tracks = (Array.isArray(body.tracks) ? body.tracks : [])
-      .map((track) => externalNeteaseTrack(track))
+      .map((track) => externalNeteaseTrack({
+        ...track,
+        playlistId: track.playlistId || track.playlists?.[0]?.id || batchId,
+        playlistName: track.playlistName || track.playlists?.[0]?.name || batchName
+      }))
       .filter((track) => track.sourceId && !isBlockedForPlayback(track));
     if (!tracks.length) return json(res, { error: "empty playlist" }, 400);
     pushCurrentIfChanging(playlist, tracks[0]);
-    rememberPlaybackContext(`play-batch:${String(body.name || "NetEase Queue").slice(0, 80)}`);
+    rememberPlaybackContext(`play-batch:${batchName}`);
     state.sessionPlaylist = {
-      id: String(body.id || "netease-session"),
-      name: String(body.name || "NetEase Queue").slice(0, 80),
+      id: batchId,
+      name: batchName,
       tracks
     };
     state.tempTrack = null;
-    state.nextTracks = [];
+    state.tempTrackSequenceNumber = 0;
+    state.sequenceCleared = false;
     state.index = 0;
     state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
     state.playing = true;
@@ -4637,38 +5413,98 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/append-batch") {
     const body = await parseBody(req);
+    const appendBatchName = String(body.name || "\u8ffd\u52a0\u6b4c\u5355").slice(0, 80);
+    const appendBatchId = String(body.id || `append-${Date.now()}`);
     const tracks = (Array.isArray(body.tracks) ? body.tracks : [])
-      .map((track) => externalNeteaseTrack(track))
+      .map((track) => externalNeteaseTrack({
+        ...track,
+        playlistId: track.playlistId || track.playlists?.[0]?.id || appendBatchId,
+        playlistName: track.playlistName || track.playlists?.[0]?.name || appendBatchName
+      }))
       .filter((track) => track.sourceId && !isBlockedForPlayback(track));
     if (!tracks.length) return json(res, { error: "empty playlist" }, 400);
-    const appendBatchName = String(body.name || "\u8ffd\u52a0\u6b4c\u5355").slice(0, 80);
+    const playlist = await loadPlaylist();
+    const activePlaylist = activePlaybackPlaylist(playlist);
+    const activePointer = activePlaybackPointer(playlist);
+    const activeTracks = filterPlaybackTracks(activePlaylist.tracks || []);
+    if (!activeTracks.length && !state.tempTrack && state.sequenceCleared) {
+      state.sessionPlaylist = {
+        id: appendBatchId,
+        name: appendBatchName,
+        tracks
+      };
+      state.sequenceCleared = false;
+      state.index = 0;
+      state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, 0, state.playbackMode);
+      state.playing = false;
+      await broadcast();
+      return json(res, await currentPayload());
+    }
+    if (!activeTracks.length && !state.tempTrack) return json(res, { error: "empty playback context" }, 400);
     rememberPlaybackContext(`append-batch:${appendBatchName}`);
-    const dedupe = (items) => {
-      const seen = new Set();
-      return items.filter((track) => {
-        const key = String(track.sourceId || track.id || `${track.title}:${track.artist}`);
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    };
-    state.nextTracks = dedupe([
-      ...tracks,
-      ...filterPlaybackTracks(state.nextTracks || [])
-    ]);
+    const currentTrack = activePointer.track ? externalNeteaseTrack(activePointer.track) : null;
+    const queueBase = state.sessionPlaylist?.tracks?.length
+      ? state.sessionPlaylist
+      : (activeTracks.length
+        ? {
+          ...activePlaylist,
+          playlist: {
+            ...(activePlaylist.playlist || {}),
+            id: String(activePlaylist.playlist?.id || activePlaylist.id || appendBatchId),
+            name: String(activePlaylist.playlist?.name || activePlaylist.name || appendBatchName).slice(0, 80)
+          },
+          tracks: activeTracks.map((track) => externalNeteaseTrack({
+            ...track,
+            playlistId: track.playlistId || activePlaylist.playlist?.id || activePlaylist.id || "",
+            playlistName: track.playlistName || activePlaylist.playlist?.name || activePlaylist.name || ""
+          }))
+        }
+        : {
+          id: appendBatchId,
+          name: appendBatchName,
+          playlist: {
+            id: appendBatchId,
+            name: appendBatchName,
+            creator: "Local",
+            cover: "",
+            trackCount: currentTrack ? 1 : 0
+          },
+          tracks: [currentTrack].filter(Boolean),
+          source: "netease-session"
+        });
+    const { playlist: updatedPlaylist, currentIndex } = appendTracksIntoPlaybackQueueAfterCurrent(
+      queueBase,
+      tracks,
+      Number(activePointer.index || state.index || 0)
+    );
+    state.tempTrack = null;
+    state.tempTrackSequenceNumber = 0;
+    state.sequenceCleared = false;
+    state.index = Number(currentIndex || 0);
+    state.queue = buildPlaybackQueueIndexes(updatedPlaylist || state.sessionPlaylist, state.index, state.playbackMode);
     await broadcast();
     return json(res, await currentPayload());
   }
 
   if (req.method === "POST" && pathname === "/api/queue-next") {
     const body = await parseBody(req);
-    const track = externalNeteaseTrack(body.track || body);
+    const playlist = await loadPlaylist();
+    const pointer = activePlaybackPointer(playlist);
+    const track = externalNeteaseTrack({
+      ...(body.track || body)
+    });
     if (!track.sourceId) return json(res, { error: "missing song id" }, 400);
     if (isBlockedForPlayback(track)) return json(res, { error: "blocked track type" }, 400);
-    state.nextTracks ||= [];
-    const duplicateIndex = state.nextTracks.findIndex((item) => String(item.sourceId || item.id) === String(track.sourceId));
-    if (duplicateIndex >= 0) state.nextTracks.splice(duplicateIndex, 1);
-    state.nextTracks.push(track);
+    const activePlaylist = activePlaybackPlaylist(playlist);
+    const queueBase = state.sessionPlaylist?.tracks?.length
+      ? state.sessionPlaylist
+      : (activePlaylist.tracks.length ? activePlaylist : playlist);
+    const { playlist: updatedPlaylist } = insertTrackIntoPlaybackQueueAfterCurrent(queueBase, track, Number(pointer.index || state.index || 0));
+    const currentIndex = updatedPlaylist?.tracks?.length
+      ? ((Number(state.index || 0) % updatedPlaylist.tracks.length) + updatedPlaylist.tracks.length) % updatedPlaylist.tracks.length
+      : 0;
+    state.queue = buildPlaybackQueueIndexes(updatedPlaylist || queueBase, currentIndex, state.playbackMode);
+    state.sequenceCleared = false;
     await broadcast();
     return json(res, await currentPayload());
   }
@@ -4677,35 +5513,22 @@ async function handleApi(req, res, pathname) {
     const body = await parseBody(req);
     const playlist = await loadPlaylist();
     const activePlaylist = activePlaybackPlaylist(playlist);
-    if (body.fromSequence && String(body.source || "").trim() === "next" && (body.sourceId || body.track?.sourceId)) {
-      const sourceId = String(body.sourceId || body.track?.sourceId || "").trim();
-      if (rotateTempTrackQueueToSourceId(sourceId)) {
-        pushCurrentIfChanging(playlist, state.tempTrack);
-        state.playing = true;
-        state.lastHostLine = "";
-        resetPlaybackPosition(state.tempTrack);
-        warmSongUrl(sourceId);
-        fillTempHostLineAsync(state.tempTrack);
-        await broadcast();
-        return json(res, await currentPayload());
-      }
-    }
     if (body.track?.sourceId || body.sourceId) {
       const track = body.track || {};
       const sourceId = String(track.sourceId || body.sourceId || "").trim();
       if (isBlockedForPlayback(track)) return json(res, { error: "blocked track type" }, 400);
       const activeMatchIndex = activePlaylist.tracks.findIndex((item) => String(item.sourceId || item.id || "") === sourceId);
       if (activeMatchIndex >= 0) {
-        const matchedTrack = activePlaylist.tracks[activeMatchIndex];
-        pushCurrentIfChanging(playlist, matchedTrack);
-        state.tempTrack = null;
-        if (activePlaylist.source !== "netease-session") {
+        const targetTrack = activePlaylist.tracks[activeMatchIndex];
+        const displacedTrack = activePlaybackPointer(playlist).track;
+        pushCurrentIfChanging(playlist, targetTrack);
+        const matchedTrack = replaceCurrentWithPlaylistIndex(activePlaylist, activeMatchIndex, { displacedTrack });
+        if (!matchedTrack) return json(res, { error: "invalid track index" }, 400);
+        state.sequenceCleared = false;
+        state.tempTrackSequenceNumber = 0;
+        if (activePlaylist.source !== "netease-session" && !state.sessionPlaylist?.tracks?.length) {
           state.sessionPlaylist = null;
-          state.nextSessionPlaylist = null;
         }
-        state.nextTracks = [];
-        state.index = activeMatchIndex;
-        state.queue = buildPlaybackQueueIndexes(activePlaylist, activeMatchIndex, state.playbackMode);
         state.playing = true;
         state.lastHostLine = "";
         resetPlaybackPosition(matchedTrack);
@@ -4716,34 +5539,46 @@ async function handleApi(req, res, pathname) {
       }
       const sessionIndex = state.sessionPlaylist?.tracks?.findIndex((item) => String(item.sourceId || item.id) === sourceId) ?? -1;
       if (sessionIndex >= 0) {
-        pushCurrentIfChanging(playlist, state.sessionPlaylist.tracks[sessionIndex]);
-        state.tempTrack = null;
-        state.index = sessionIndex;
-        state.queue = buildPlaybackQueueIndexes(state.sessionPlaylist, sessionIndex, state.playbackMode);
+        const targetTrack = state.sessionPlaylist.tracks[sessionIndex];
+        const displacedTrack = activePlaybackPointer(playlist).track;
+        pushCurrentIfChanging(playlist, targetTrack);
+        const matchedTrack = replaceCurrentWithPlaylistIndex(state.sessionPlaylist, sessionIndex, { displacedTrack });
+        if (!matchedTrack) return json(res, { error: "invalid track index" }, 400);
+        state.sequenceCleared = false;
+        state.tempTrackSequenceNumber = 0;
         state.playing = true;
         state.lastHostLine = "";
-        resetPlaybackPosition(state.sessionPlaylist.tracks[sessionIndex]);
+        resetPlaybackPosition(matchedTrack);
         warmSongUrl(sourceId);
         fillHostLineAsync(state.index);
         await broadcast();
         return json(res, await currentPayload());
       }
-      state.tempTrack = externalNeteaseTrack({
+      const insertedTrack = externalNeteaseTrack({
         ...body,
         ...track,
         sourceId
       });
-      pushCurrentIfChanging(playlist, state.tempTrack);
-      state.nextTracks = [
-        state.tempTrack,
-        ...filterPlaybackTracks(state.nextTracks || [])
-          .filter((item) => String(item.sourceId || item.id) !== sourceId)
-      ];
+      const displacedPointer = activePlaybackPointer(playlist);
+      const queueBase = state.sessionPlaylist?.tracks?.length
+        ? state.sessionPlaylist
+        : (activePlaylist.tracks.length ? activePlaylist : playlist);
+      const pointerIndex = Number(displacedPointer.index || state.index || 0);
+      const { currentTrack } = replaceCurrentWithExternalTrackAndKeepQueue(
+        queueBase,
+        insertedTrack,
+        pointerIndex
+      );
+      if (!currentTrack) return json(res, { error: "invalid track index" }, 400);
+      state.tempTrack = null;
+      state.tempTrackSequenceNumber = 0;
+      state.sequenceCleared = false;
+      pushCurrentIfChanging(playlist, currentTrack);
       state.playing = true;
       state.lastHostLine = "";
-      resetPlaybackPosition(state.tempTrack);
+      resetPlaybackPosition(currentTrack);
       warmSongUrl(sourceId);
-      fillTempHostLineAsync(state.tempTrack);
+      fillHostLineAsync(state.index);
       await broadcast();
       return json(res, await currentPayload());
     }
@@ -4753,19 +5588,19 @@ async function handleApi(req, res, pathname) {
     }
     const selectedTrack = activePlaylist.tracks[index];
     if (isBlockedForPlayback(selectedTrack)) return json(res, { error: "blocked track type" }, 400);
+    const displacedTrack = activePlaybackPointer(playlist).track;
     pushCurrentIfChanging(playlist, selectedTrack);
-    state.tempTrack = null;
-    if (activePlaylist.source !== "netease-session") {
+    const nextTrack = replaceCurrentWithPlaylistIndex(activePlaylist, index, { displacedTrack });
+    if (!nextTrack) return json(res, { error: "invalid track index" }, 400);
+    state.sequenceCleared = false;
+    state.tempTrackSequenceNumber = 0;
+    if (activePlaylist.source !== "netease-session" && !state.sessionPlaylist?.tracks?.length) {
       state.sessionPlaylist = null;
-      state.nextSessionPlaylist = null;
     }
-    state.nextTracks = [];
-    state.index = index;
-    state.queue = buildPlaybackQueueIndexes(activePlaylist, index, state.playbackMode);
     state.playing = true;
     state.lastHostLine = "";
-    resetPlaybackPosition(selectedTrack);
-    warmSongUrl(selectedTrack?.sourceId || selectedTrack?.id);
+    resetPlaybackPosition(nextTrack);
+    warmSongUrl(nextTrack?.sourceId || nextTrack?.id);
     fillHostLineAsync(state.index);
     await broadcast();
     return json(res, await currentPayload());
