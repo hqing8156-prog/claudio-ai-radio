@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NetEase Login</title>
+    <link rel="stylesheet" href="./panel.css">
+  </head>
+  <body>
+    <main class="panel">
+      <header>
+        <span class="eyebrow">NetEase Login</span>
+        <h1>Scan QR code</h1>
+        <p>After login, the desktop app saves the cookie in its own local config and restarts the player service.</p>
+      </header>
+      <section class="qr-card">
+        <img id="qrImage" alt="NetEase login QR code">
+        <div id="qrPlaceholder">Creating QR code</div>
+      </section>
+      <p id="status" class="status">Make sure api-enhanced is running or configured in Settings.</p>
+      <button id="refreshBtn" type="button">Refresh QR code</button>
+    </main>
+    <script src="./login.js"></script>
+  </body>
+</html>

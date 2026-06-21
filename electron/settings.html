@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings</title>
+    <link rel="stylesheet" href="./panel.css">
+  </head>
+  <body>
+    <main class="panel">
+      <header>
+        <span class="eyebrow">Settings</span>
+        <h1>Desktop data and API</h1>
+        <p>The desktop app uses its own data folder. Import old project data only when you choose to.</p>
+      </header>
+      <section class="import-box">
+        <strong>Import old project data</strong>
+        <p id="dataPath">Loading paths.</p>
+        <label>
+          <span>Old project folder</span>
+          <input id="legacyProjectPath" autocomplete="off" placeholder="Folder containing data and radio-secrets.ps1">
+        </label>
+        <label class="check-row">
+          <input id="includeSecrets" type="checkbox">
+          <span>Also import cookie and API keys from radio-secrets.ps1</span>
+        </label>
+        <button id="importLegacyBtn" type="button">Import from old project</button>
+        <button id="resetDataBtn" type="button" class="secondary">Reset desktop data</button>
+      </section>
+      <form id="settingsForm">
+        <label>
+          <span>NetEase API URL</span>
+          <input id="neteaseApiBase" autocomplete="off" placeholder="http://localhost:4000">
+        </label>
+        <label>
+          <span>NetEase API project folder</span>
+          <input id="neteaseApiProjectPath" autocomplete="off" placeholder="C:\path\to\api-enhanced">
+        </label>
+        <label>
+          <span>My Likes playlist ID</span>
+          <input id="neteaseLibraryPlaylistId" autocomplete="off" placeholder="Leave empty for a clean desktop app">
+        </label>
+        <label>
+          <span>Default record-player playlist IDs</span>
+          <input id="neteaseImportedPlaylistIds" autocomplete="off" placeholder="Comma separated, optional">
+        </label>
+        <label>
+          <span>Favorite target playlist IDs</span>
+          <input id="neteaseFavoritePlaylistIds" autocomplete="off" placeholder="Comma separated, optional">
+        </label>
+        <label>
+          <span>Playlist display names</span>
+          <input id="neteasePlaylistNames" autocomplete="off" placeholder="id:name,id:name">
+        </label>
+        <label>
+          <span>DeepSeek API Key</span>
+          <input id="deepseekApiKey" type="password" autocomplete="off" placeholder="Leave empty to keep saved key">
+        </label>
+        <label>
+          <span>DeepSeek Base URL</span>
+          <input id="deepseekBaseUrl" autocomplete="off" placeholder="https://api.deepseek.com">
+        </label>
+        <label>
+          <span>DeepSeek Model</span>
+          <input id="deepseekModel" autocomplete="off" placeholder="deepseek-chat">
+        </label>
+        <label class="check-row">
+          <input id="clearDeepSeek" type="checkbox">
+          <span>Clear saved DeepSeek API key</span>
+        </label>
+        <button type="submit">Save and restart service</button>
+      </form>
+      <p id="status" class="status">Loading settings.</p>
+    </main>
+    <script src="./settings.js"></script>
+  </body>
+</html>
