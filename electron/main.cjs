@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog, nativeImage } = require("electron");
+﻿const { app, BrowserWindow, Menu, ipcMain, shell, dialog, nativeImage } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -9,7 +9,7 @@ const DESKTOP_BOOT_MIN_MS = 700;
 const DESKTOP_BOOT_SETTLE_MS = 120;
 const DEFAULT_CONFIG = {
   neteaseApiBase: "http://localhost:4000",
-  neteaseApiProjectPath: "C:\\path\\to\\api-enhanced",
+  neteaseApiProjectPath: "",
   neteaseCookie: "",
   neteaseLibraryPlaylistId: "",
   neteaseImportedPlaylistIds: "",
@@ -162,7 +162,7 @@ function schedulePlayerReload(reason = "load-failed") {
       if (ready && mainWindow && !mainWindow.isDestroyed()) {
         await loadPlayerWindow(mainWindow, { hardReload: true });
       } else if (mainWindow && !mainWindow.isDestroyed()) {
-        await loadBootScreen(mainWindow, "播放器服务正在重连，请稍后...");
+        await loadBootScreen(mainWindow, "鎾斁鍣ㄦ湇鍔℃鍦ㄩ噸杩烇紝璇风◢鍚?..");
       }
     } catch (error) {
       appendDesktopLog("window", "reload after failure failed", String(error?.stack || error));
@@ -171,15 +171,17 @@ function schedulePlayerReload(reason = "load-failed") {
 }
 
 function notifyNeteaseApiIssue(reason) {
-  appendDesktopLog("netease-api", reason, `projectPath=${readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`);
+  const configuredPath = String(readConfig().neteaseApiProjectPath || "").trim();
+  const resolvedPath = resolveNeteaseApiProjectPath();
+  appendDesktopLog("netease-api", reason, `configuredPath=${configuredPath || "(empty)"}\nresolvedPath=${resolvedPath || "(missing)"}`);
   if (neteaseApiIssueShown) return;
   neteaseApiIssueShown = true;
-  const detail = `网易云服务没有成功启动。\n\n原因：${reason}\n\n日志位置：${desktopLogPath()}\n项目目录：${readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`;
+  const detail = `缃戞槗浜戞湇鍔℃病鏈夋垚鍔熷惎鍔ㄣ€俓n\n鍘熷洜锛?{reason}\n\n鏃ュ織浣嶇疆锛?{desktopLogPath()}\n椤圭洰鐩綍锛?{readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`;
   if (app.isReady()) {
     dialog.showMessageBox({
       type: "warning",
       title: "Claudio AI Radio Desktop",
-      message: "网易云服务启动失败",
+      message: "缃戞槗浜戞湇鍔″惎鍔ㄥけ璐?,
       detail
     }).catch(() => {});
   }
@@ -192,6 +194,32 @@ function readConfig() {
   } catch {
     return { ...DEFAULT_CONFIG };
   }
+}
+
+function isValidNeteaseApiProjectPath(candidate) {
+  if (!candidate) return false;
+  try {
+    return fs.existsSync(path.join(candidate, "package.json"));
+  } catch {
+    return false;
+  }
+}
+
+function findBundledNeteaseApiProjectPath() {
+  const candidates = [];
+  try {
+    candidates.push(path.dirname(require.resolve("@neteasecloudmusicapienhanced/api/package.json", {
+      paths: [projectRoot(), __dirname]
+    })));
+  } catch {}
+  candidates.push(path.join(projectRoot(), "node_modules", "@neteasecloudmusicapienhanced", "api"));
+  return candidates.find((candidate) => isValidNeteaseApiProjectPath(candidate)) || "";
+}
+
+function resolveNeteaseApiProjectPath() {
+  const configured = String(readConfig().neteaseApiProjectPath || "").trim();
+  if (isValidNeteaseApiProjectPath(configured)) return configured;
+  return findBundledNeteaseApiProjectPath();
 }
 
 function legacyProjectPath() {
@@ -567,19 +595,19 @@ async function updateThumbarButtons(force = false) {
   lastThumbarSignature = signature;
   mainWindow.setThumbarButtons([
     {
-      tooltip: "上一首",
+      tooltip: "涓婁竴棣?,
       icon: THUMBAR_ICONS.previous,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("previous")
     },
     {
-      tooltip: playing ? "暂停" : "播放",
+      tooltip: playing ? "鏆傚仠" : "鎾斁",
       icon: playing ? THUMBAR_ICONS.pause : THUMBAR_ICONS.play,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("toggle")
     },
     {
-      tooltip: "下一首",
+      tooltip: "涓嬩竴棣?,
       icon: THUMBAR_ICONS.next,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("next")
@@ -622,9 +650,9 @@ async function startNeteaseApiIfNeeded() {
     });
     return neteaseApiStartupPromise;
   }
-  const apiDir = readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath;
-  if (!fs.existsSync(path.join(apiDir, "package.json"))) {
-    notifyNeteaseApiIssue(`找不到 api-enhanced 项目: ${apiDir}`);
+  const apiDir = resolveNeteaseApiProjectPath();
+  if (!apiDir) {
+    notifyNeteaseApiIssue(`鎵句笉鍒?api-enhanced 椤圭洰: ${apiDir}`);
     return false;
   }
   neteaseApiProcess = spawn(process.execPath, [path.join(__dirname, "netease-api-runner.cjs"), apiDir], {
@@ -640,11 +668,11 @@ async function startNeteaseApiIfNeeded() {
   });
   appendDesktopLog("netease-api", "spawned process", `projectPath=${apiDir}`);
   neteaseApiStartupPromise = isNeteaseApiReady(12000).then((ready) => {
-    if (!ready) notifyNeteaseApiIssue("等待 4000 端口超时，服务未就绪");
+    if (!ready) notifyNeteaseApiIssue("绛夊緟 4000 绔彛瓒呮椂锛屾湇鍔℃湭灏辩华");
     else appendDesktopLog("netease-api", "ready on port 4000");
     return ready;
   }).catch((error) => {
-    notifyNeteaseApiIssue(error?.message || "未知错误");
+    notifyNeteaseApiIssue(error?.message || "鏈煡閿欒");
     return false;
   }).finally(() => {
     neteaseApiStartupPromise = null;
@@ -853,7 +881,7 @@ function importLegacyData({ includeSecrets = false } = {}) {
   let importedSecrets = false;
   if (includeSecrets) {
     const legacy = readLegacySecrets();
-    if (!legacy.neteaseLibraryPlaylistId) legacy.neteaseLibraryPlaylistId = "";
+    if (!legacy.neteaseLibraryPlaylistId) legacy.neteaseLibraryPlaylistId = "2529027467";
     if (!legacy.deepseekModel) legacy.deepseekModel = "deepseek-chat";
     if (Object.keys(legacy).length) {
       writeConfig({ ...legacy, importedFromLegacy: new Date().toISOString() });
@@ -1008,3 +1036,5 @@ app.on("before-quit", (event) => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+
