@@ -176,12 +176,20 @@ function notifyNeteaseApiIssue(reason) {
   appendDesktopLog("netease-api", reason, `configuredPath=${configuredPath || "(empty)"}\nresolvedPath=${resolvedPath || "(missing)"}`);
   if (neteaseApiIssueShown) return;
   neteaseApiIssueShown = true;
-  const detail = `缃戞槗浜戞湇鍔℃病鏈夋垚鍔熷惎鍔ㄣ€俓n\n鍘熷洜锛?{reason}\n\n鏃ュ織浣嶇疆锛?{desktopLogPath()}\n椤圭洰鐩綍锛?{readConfig().neteaseApiProjectPath || DEFAULT_CONFIG.neteaseApiProjectPath}`;
+  const detail = [
+    "NetEase service failed to start.",
+    "",
+    `Reason: ${reason}`,
+    "",
+    `Log: ${desktopLogPath()}`,
+    `Configured path: ${configuredPath || "(empty)"}`,
+    `Resolved path: ${resolvedPath || "(missing)"}`
+  ].join("\n");
   if (app.isReady()) {
     dialog.showMessageBox({
       type: "warning",
       title: "Claudio AI Radio Desktop",
-      message: "缃戞槗浜戞湇鍔″惎鍔ㄥけ璐?,
+      message: "NetEase service startup failed",
       detail
     }).catch(() => {});
   }
@@ -595,19 +603,19 @@ async function updateThumbarButtons(force = false) {
   lastThumbarSignature = signature;
   mainWindow.setThumbarButtons([
     {
-      tooltip: "涓婁竴棣?,
+      tooltip: "Previous",
       icon: THUMBAR_ICONS.previous,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("previous")
     },
     {
-      tooltip: playing ? "鏆傚仠" : "鎾斁",
+      tooltip: playing ? "Pause" : "Play",
       icon: playing ? THUMBAR_ICONS.pause : THUMBAR_ICONS.play,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("toggle")
     },
     {
-      tooltip: "涓嬩竴棣?,
+      tooltip: "Next",
       icon: THUMBAR_ICONS.next,
       flags: available ? ["dismissonclick"] : ["disabled"],
       click: () => invokeThumbarAction("next")
