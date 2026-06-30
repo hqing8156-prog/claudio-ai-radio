@@ -38,6 +38,7 @@ const els = {
   songidResults: $("#songidResults"),
   songidStage: $("#songidStage"),
   songidMeta: $("#songidMeta"),
+  songidResultsHeading: $("#songidResultsHeading"),
   songidBack: $("#songidBack"),
   songidPlayAll: $("#songidPlayAll"),
   songidActionMenuBtn: $("#songidActionMenuBtn"),
@@ -74,6 +75,7 @@ let nextInFlight = false;
 let likeCheckKey = "";
 let currentSongidBatch = [];
 let currentSongidBatchName = "NetEase Queue";
+let currentSongidBatchCover = "";
 let sequenceItems = [];
 let albumReflection = null;
 let memoryCoordinateUi = null;
@@ -1070,11 +1072,13 @@ function songTagClass(tag) {
   return "tag-green";
 }
 
-function setSongidBatch(items = [], name = "NetEase Queue") {
+function setSongidBatch(items = [], name = "NetEase Queue", cover = "") {
   currentSongidBatch = items.filter((item) => item.sourceId);
   currentSongidBatchName = name;
+  currentSongidBatchCover = String(cover || "").replace(/^http:/, "https:");
   setSongidView("results");
   els.songidStage?.classList.remove("hidden");
+  els.songidResultsHeading?.classList.remove("hidden");
   els.songidResults?.classList.remove("hidden");
   if (els.songidPlayAll) els.songidPlayAll.disabled = currentSongidBatch.length === 0;
   if (els.songidActionMenuBtn) els.songidActionMenuBtn.disabled = currentSongidBatch.length === 0;
@@ -1094,6 +1098,7 @@ function setSongidView(mode = "home") {
   panel.classList.toggle("songid-results-mode", mode !== "home");
   if (mode === "home") {
     els.songidStage?.classList.add("hidden");
+    els.songidResultsHeading?.classList.add("hidden");
     els.songidResults?.classList.add("hidden");
     if (els.songidInput) els.songidInput.value = "";
     setSongidSource("");
@@ -1213,6 +1218,7 @@ async function refreshSourceCardCaptions() {
 function openSongidResults(message) {
   setSongidView("results");
   els.songidStage?.classList.remove("hidden");
+  els.songidResultsHeading?.classList.remove("hidden");
   els.songidResults?.classList.remove("hidden");
   if (els.songidPlayAll) els.songidPlayAll.disabled = true;
   if (els.songidActionMenuBtn) els.songidActionMenuBtn.disabled = true;
@@ -1280,8 +1286,8 @@ async function loadArtistWorks(artist, artistId = "") {
   openPanel("songid");
   setSongidSource("artist");
   openSongidResults(`正在从网易云搜索 ${escapeHtml(name)} 的作品...`);
+  let data;
   try {
-    let data;
     try {
       const params = id
         ? `id=${encodeURIComponent(id)}&artist=${encodeURIComponent(name)}`
@@ -1291,7 +1297,7 @@ async function loadArtistWorks(artist, artistId = "") {
       data = await api(`/api/netease-search?q=${encodeURIComponent(name)}&limit=50`);
     }
     const recommendations = data.recommendations || [];
-    setSongidBatch(recommendations, `${name} 的作品`);
+    setSongidBatch(recommendations, `${name} 的作品`, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], `${name} 的作品`);
@@ -1307,14 +1313,15 @@ async function loadAlbumSongs(albumId, albumName = "", songId = "") {
   openPanel("songid");
   setSongidSource(`album-${id || sourceId}`);
   openSongidResults(`正在打开《${escapeHtml(name)}》...`);
+  let data;
   try {
     const endpoint = id
       ? `/api/netease-album?id=${encodeURIComponent(id)}`
       : `/api/netease-album?songId=${encodeURIComponent(sourceId)}`;
-    const data = await api(endpoint);
+    data = await api(endpoint);
     const recommendations = data.recommendations || [];
     const sourceName = data.source?.name || name;
-    setSongidBatch(recommendations, sourceName);
+    setSongidBatch(recommendations, sourceName, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], name);
@@ -1393,7 +1400,9 @@ async function refreshSongidResultLikes() {
 
 function songidCards(recommendations = []) {
   return recommendations.length
-    ? recommendations.map((item) => {
+    ? `<div class="songid-results-body">${recommendations.map((item, index) => {
+      const cover = String(item.cover || item.albumCover || item.picUrl || currentSongidBatchCover || "").replace(/^http:/, "https:");
+      const fallbackLabel = escapeHtml((item.album || item.title || "?").slice(0, 1).toUpperCase());
       const tags = Number.isFinite(Number(item.firstLyricAt))
         ? [`约${Math.round(Number(item.firstLyricAt))}秒开唱`, ...(item.tags || [])]
         : (item.tags || []);
@@ -1405,11 +1414,12 @@ function songidCards(recommendations = []) {
         data-artist-ids="${escapeHtml(JSON.stringify(item.artistIds || []))}"
         data-album="${escapeHtml(item.album || "")}"
         data-album-id="${escapeHtml(item.albumId || "")}"
-        data-cover="${escapeHtml(item.cover || "")}"
+        data-cover="${escapeHtml(cover)}"
         data-duration="${escapeHtml(item.duration || "")}"
         data-library-playlist-id="${escapeHtml(item.libraryPlaylistId || "")}"
         data-tags="${escapeHtml(JSON.stringify(item.tags || []))}">
-        ${item.cover ? `<img src="${escapeHtml(String(item.cover).replace(/^http:/, "https:"))}" alt="">` : `<div class="songid-cover-fallback"></div>`}
+        <span class="songid-order">${index + 1}</span>
+        ${cover ? `<img src="${escapeHtml(cover)}" alt="">` : `<div class="songid-cover-fallback">${fallbackLabel}</div>`}
         <span>
           <strong>${escapeHtml(item.title)}</strong>
           <small>${songTags(tags)}<span class="song-meta">${artistLinksHtml(item.artist || "")}${item.album ? ` · ${escapeHtml(item.album)}` : ""}</span></small>
@@ -1419,8 +1429,8 @@ function songidCards(recommendations = []) {
         <button class="songid-like" type="button" title="红心到网易云账号" aria-label="喜欢 ${escapeHtml(item.title)}">♡</button>
       </article>
     `;
-    }).join("")
-    : `<article class="empty-list">没有结果</article>`;
+    }).join("")}</div>`
+    : `<div class="songid-results-body"><article class="empty-list">没有结果</article></div>`;
 }
 
 function addStationMessage(text, recommendations = []) {
@@ -1629,7 +1639,7 @@ els.songidSearch?.addEventListener("submit", async (event) => {
   openSongidResults("正在从网易云搜索...");
   try {
     const data = await api(`/api/netease-search?q=${encodeURIComponent(query)}&limit=50`);
-    setSongidBatch(data.recommendations || [], `搜索：${query}`);
+    setSongidBatch(data.recommendations || [], `搜索：${query}`, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], `搜索：${query}`);
@@ -1641,10 +1651,11 @@ async function loadNeteaseSource(source) {
   setSongidSource(source);
   const label = source === "personal_fm" ? "私人雷达" : "每日推荐";
   openSongidResults(`正在打开${label}...`);
+  let data;
   try {
-    const data = await api(`/api/netease-dynamic?source=${encodeURIComponent(source)}`);
+    data = await api(`/api/netease-dynamic?source=${encodeURIComponent(source)}`);
     updateSourceCardCaption(source, data);
-    setSongidBatch(data.recommendations || [], data.source?.name || (source === "personal_fm" ? "私人雷达" : "每日推荐"));
+    setSongidBatch(data.recommendations || [], data.source?.name || (source === "personal_fm" ? "私人雷达" : "每日推荐"), data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], "NetEase Queue");
@@ -1658,10 +1669,11 @@ els.fmSource?.addEventListener("click", () => loadNeteaseSource("personal_fm"));
 async function loadLocalSongidPlaylist() {
   setSongidSource("local");
   openSongidResults("正在打开我的喜欢...");
+  let data;
   try {
-    const data = await api("/api/local-playlist");
+    data = await api("/api/local-playlist");
     updateSourceCardCaption("local", data);
-    setSongidBatch(data.recommendations || [], data.source?.name || "我的喜欢");
+    setSongidBatch(data.recommendations || [], data.source?.name || "我的喜欢", data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], "我的喜欢");
@@ -1686,10 +1698,11 @@ async function loadFixedNeteasePlaylist(id = "") {
   const sourceButton = document.querySelector(`.source-card[data-source="${CSS.escape(`playlist-${id}`)}"] strong`);
   const loadingName = sourceButton?.textContent?.trim() || `Playlist ${id}`;
   openSongidResults(`正在打开 ${escapeHtml(loadingName)}...`);
+  let data;
   try {
-    const data = await api(`/api/netease-playlist?id=${encodeURIComponent(id)}`);
+    data = await api(`/api/netease-playlist?id=${encodeURIComponent(id)}`);
     updateSourceCardCaption(`playlist-${id}`, data);
-    setSongidBatch(data.recommendations || [], data.source?.name || `Playlist ${id}`);
+    setSongidBatch(data.recommendations || [], data.source?.name || `Playlist ${id}`, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], `Playlist ${id}`);
@@ -1880,7 +1893,7 @@ els.songidResults?.addEventListener("click", async (event) => {
   }
 });
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=201");
 
 window.addEventListener("resize", scheduleAlbumReflection);
 els.coverArt?.addEventListener("load", scheduleAlbumReflection);

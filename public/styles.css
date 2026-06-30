@@ -8009,3 +8009,91 @@ body {
   font-weight: 820 !important;
   text-align: center !important;
 }
+
+/* v193: move SongID list title outside results region and show covers in rows */
+.songid-results-heading {
+  margin: 0 clamp(16px, 2vw, 26px) 10px !important;
+  color: rgba(196, 211, 240, 0.92);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.songid-results-heading.hidden {
+  display: none !important;
+}
+
+#songid .songid-results {
+  padding-top: 0 !important;
+  background: transparent !important;
+}
+
+.songid-results-body {
+  margin: 0 clamp(16px, 2vw, 26px) 0 !important;
+  padding: 14px !important;
+  border-radius: 22px;
+  background: rgba(18, 24, 31, 0.92);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.songid-card {
+  grid-template-columns: 34px 52px minmax(0, 1fr) 36px 36px 36px !important;
+  gap: 12px !important;
+}
+
+.songid-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  color: rgba(233, 236, 242, 0.92);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.songid-card img,
+.songid-cover-fallback {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0;
+  background:
+    linear-gradient(135deg, rgba(143, 215, 255, 0.3), rgba(244, 154, 177, 0.18)),
+    rgba(145, 240, 179, 0.16);
+}
+
+.songid-card > span:not(.songid-order) {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .songid-results-body {
+    margin-left: 16px !important;
+    margin-right: 16px !important;
+    padding: 10px !important;
+    border-radius: 18px;
+  }
+
+  .songid-card {
+    grid-template-columns: 28px 44px minmax(0, 1fr) 34px 34px 34px !important;
+    gap: 8px !important;
+  }
+
+  .songid-order {
+    width: 28px;
+    font-size: 12px;
+  }
+
+  .songid-card img,
+  .songid-cover-fallback {
+    width: 44px;
+    height: 44px;
+  }
+}
