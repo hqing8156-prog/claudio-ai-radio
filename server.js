@@ -10,10 +10,13 @@ const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.CLAUDIO_DATA_DIR || path.join(__dirname, "data");
 const APP_VERSION = "2026-06-16-queue-sync-utf8-v325";
-const envCsv = (name, fallback = "") => String(process.env[name] ?? fallback)
-  .split(",")
-  .map((item) => item.trim())
-  .filter(Boolean);
+const envCsv = (name, fallback = "") => {
+  const raw = String(process.env[name] ?? "").trim();
+  return String(raw || fallback)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
 const NETEASE_PERSONAL_RADAR_ID = String(process.env.NETEASE_PERSONAL_RADAR_ID || "3136952023");
 const NETEASE_CUSTOM_PLAYLIST_ID = String(process.env.NETEASE_CUSTOM_PLAYLIST_ID || "").trim();
 const NETEASE_LIBRARY_PLAYLIST_ID = String(process.env.NETEASE_LIBRARY_PLAYLIST_ID || "2529027467");
@@ -728,7 +731,7 @@ function extractExplicitPlaybackCommand(prompt) {
 
 function wantsPendingTitlePlayback(prompt) {
   const text = normalizeText(prompt);
-  return /直接播放|播放就行|就这首|不用确认|默认版本|原声版/i.test(text);
+  return /(?:\u76f4\u63a5\u64ad\u653e|\u64ad\u653e\u5c31\u884c|\u5c31\u8fd9\u9996|\u4e0d\u7528\u786e\u8ba4|\u9ed8\u8ba4\u7248\u672c|\u539f\u58f0\u7248)/i.test(text);
 }
 
 function extractRequestedTitle(prompt) {
@@ -1036,15 +1039,36 @@ function readDesktopConfig() {
   }
 }
 
-function configuredNeteaseApiProjectPath() {
-  const desktopConfig = readDesktopConfig();
-  return String(
-    process.env.NETEASE_API_PROJECT_PATH
-    || desktopConfig.neteaseApiProjectPath
-    || path.join(path.dirname(__dirname), "api-enhanced")
-  ).trim();
+function isValidNeteaseApiProjectPath(candidate) {
+  if (!candidate) return false;
+  try {
+    return existsSync(path.join(candidate, "package.json"));
+  } catch {
+    return false;
+  }
 }
 
+function bundledNeteaseApiProjectPath() {
+  const candidates = [];
+  try {
+    candidates.push(path.dirname(require.resolve("@neteasecloudmusicapienhanced/api/package.json", {
+      paths: [__dirname]
+    })));
+  } catch {}
+  candidates.push(path.join(__dirname, "node_modules", "@neteasecloudmusicapienhanced", "api"));
+  return candidates.find((candidate) => isValidNeteaseApiProjectPath(candidate)) || "";
+}
+
+function configuredNeteaseApiProjectPath() {
+  const desktopConfig = readDesktopConfig();
+  const configured = String(
+    process.env.NETEASE_API_PROJECT_PATH
+    || desktopConfig.neteaseApiProjectPath
+    || ""
+  ).trim();
+  if (isValidNeteaseApiProjectPath(configured)) return configured;
+  return bundledNeteaseApiProjectPath();
+}
 async function isNeteaseApiReachable(base, timeoutMs = 900) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1761,12 +1785,16 @@ function looksCorruptText(value = "") {
   const text = String(value || "").trim();
   if (!text) return false;
   if (/\?{2,}/.test(text)) return true;
-  const compact = text.replace(/[\s.·_/()[\]{}:：,，。'"!！-]+/g, "");
+  const compact = text.replace(/[\s._/()[\]{}:,.!?;"'\u3000-\u303f\uff00-\uffef]+/g, "");
   if (compact && /^\?+$/.test(compact)) return true;
   if (text.includes("\uFFFD")) return true;
-  return /[鎾鎶鎵浠鍗绉闆涓銇銈雱鞐鐚鑻榛灏鍑霑鈥檙]/.test(text);
+  const corruptCharCodes = new Set([
+    0x95c0, 0x95b9, 0x5a11, 0x5e09, 0x69c1, 0x935a, 0x95b8, 0x93c9,
+    0x95c2, 0x55d8, 0x7a09, 0x95b5, 0x56e6, 0x59f8, 0x6db6, 0x95c6,
+    0x904d, 0x701b, 0x95bb, 0x61df, 0x6434, 0x7c48
+  ]);
+  return Array.from(text).some((ch) => corruptCharCodes.has(ch.charCodeAt(0)));
 }
-
 function trackNeedsMetadataRepair(track = {}) {
   const id = String(track.sourceId || track.id || "").trim();
   if (!/^\d+$/.test(id)) return false;

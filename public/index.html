@@ -9,10 +9,46 @@
     <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
     <meta property="og:type" content="website">
     <link rel="manifest" href="/manifest.webmanifest">
+    <style>
+      .desktop-startup-gate{
+        position:fixed;
+        inset:0;
+        z-index:9999;
+        display:none;
+        place-items:center;
+        background:radial-gradient(circle at top, #131a22 0%, #0b0f14 48%, #050706 100%);
+        color:#f5efe6;
+        transition:opacity .28s ease, visibility .28s ease;
+      }
+      html.desktop-shell-starting .desktop-startup-gate{display:grid}
+      .desktop-startup-gate.is-ready{opacity:0;visibility:hidden;pointer-events:none}
+      .desktop-startup-gate__inner{display:grid;gap:14px;justify-items:center;text-align:center;padding:24px}
+      .desktop-startup-gate__dot{width:10px;height:10px;border-radius:999px;background:#d94d4d;box-shadow:0 0 0 10px rgba(217,77,77,.12)}
+      .desktop-startup-gate__title{margin:0;font-size:30px;font-weight:760;line-height:1.1}
+      .desktop-startup-gate__text{margin:0;color:rgba(245,239,230,.68);font-size:14px;line-height:1.5}
+      .desktop-startup-gate__progress{display:grid;gap:8px;width:min(320px,72vw)}
+      .desktop-startup-gate__percent{font-size:13px;line-height:1;color:rgba(245,239,230,.82);justify-self:end}
+      .desktop-startup-gate__bar{width:100%;height:6px;border-radius:999px;background:rgba(245,239,230,.12);overflow:hidden}
+      .desktop-startup-gate__bar-fill{width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#d94d4d 0%,#f4b183 100%);transition:width .24s ease}
+    </style>
+    <script>
+      if (new URLSearchParams(location.search).get("desktop") === "1") document.documentElement.classList.add("desktop-shell-starting");
+    </script>
     <link rel="stylesheet" href="/styles.css?v=354">
     <title>Claudio AI Radio</title>
   </head>
   <body>
+    <div id="desktopStartupGate" class="desktop-startup-gate" aria-hidden="true">
+      <div class="desktop-startup-gate__inner">
+        <div class="desktop-startup-gate__dot"></div>
+        <h1 class="desktop-startup-gate__title">Claudio AI Radio</h1>
+        <div class="desktop-startup-gate__progress">
+          <span class="desktop-startup-gate__percent">0%</span>
+          <div class="desktop-startup-gate__bar"><div class="desktop-startup-gate__bar-fill"></div></div>
+        </div>
+        <p class="desktop-startup-gate__text">正在载入播放器...</p>
+      </div>
+    </div>
     <a class="skip-link" href="#home">跳到内容</a>
     <main class="shell">
       <section class="player" aria-label="AI radio player">
@@ -84,6 +120,7 @@
 
       <section class="panel home-panel" id="home" data-panel>
         <div class="home-weather" id="homeWeather"></div>
+        <button type="button" id="desktopSettingsBtn" class="desktop-settings-button hidden" aria-label="桌面版设置" title="桌面版设置">⚙</button>
         <section class="home-card home-sources" aria-label="歌单入口">
           <div class="home-card-head">
             <h3>歌单</h3>
@@ -158,7 +195,10 @@
           <div class="panel-head">
             <button class="panel-back-button" type="button" data-back-home aria-label="返回首页">←</button>
             <h3>歌词</h3>
-            <span id="weather">天气</span>
+            <div class="desktop-top-tools" id="desktopTopTools">
+              <span id="weather">天气</span>
+              <button type="button" id="desktopSettingsBtn" class="desktop-settings-button hidden" aria-label="桌面版设置" title="桌面版设置">⚙</button>
+            </div>
           </div>
         </div>
         <div class="lyric-stage" aria-label="歌词">
@@ -240,6 +280,37 @@
         </form>
       </section>
     </main>
+    <div id="desktopSettingsModal" class="desktop-settings-modal hidden" aria-hidden="true">
+      <div id="desktopSettingsBackdrop" class="desktop-settings-backdrop"></div>
+      <section class="desktop-settings-panel" role="dialog" aria-modal="true" aria-labelledby="desktopSettingsTitle">
+        <header class="desktop-settings-header">
+          <div>
+            <strong id="desktopSettingsTitle">桌面版设置</strong>
+            <small>服务连接状态与重连</small>
+          </div>
+          <button type="button" id="desktopSettingsClose" class="desktop-settings-close" aria-label="关闭设置">×</button>
+        </header>
+        <div class="desktop-settings-body">
+          <article class="desktop-service-card">
+            <div class="desktop-service-copy">
+              <strong>3000 主服务</strong>
+              <small id="desktopServer3000Text">检测中...</small>
+            </div>
+            <span id="desktopServer3000Badge" class="desktop-service-badge">--</span>
+          </article>
+          <article class="desktop-service-card">
+            <div class="desktop-service-copy">
+              <strong>4000 网易云服务</strong>
+              <small id="desktopServer4000Text">检测中...</small>
+            </div>
+            <span id="desktopServer4000Badge" class="desktop-service-badge">--</span>
+          </article>
+        </div>
+        <footer class="desktop-settings-footer">
+          <button type="button" id="desktopSettingsRefresh" class="desktop-settings-refresh">刷新并重连</button>
+        </footer>
+      </section>
+    </div>
     <script src="/app.js?v=356" type="module"></script>
   </body>
 </html>
