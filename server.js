@@ -241,6 +241,63 @@ async function writeJson(file, value) {
   await writeFile(path.join(DATA_DIR, file), `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function readSourceCardOrder() {
+  try {
+    const data = await readJson("source-card-order.json");
+    const ids = Array.isArray(data?.ids) ? data.ids : Array.isArray(data) ? data : [];
+    return [...new Set(ids.map((id) => String(id || "").trim()).filter((id) => /^\d{4,}$/.test(id)))];
+  } catch {
+    return [];
+  }
+}
+
+async function writeSourceCardOrder(ids = []) {
+  const clean = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || "").trim())
+    .filter((id) => /^\d{4,}$/.test(id)))];
+  await writeJson("source-card-order.json", { ids: clean });
+  return clean;
+}
+
+async function readHiddenSourceCardIds() {
+  try {
+    const data = await readJson("source-card-hidden.json");
+    const ids = Array.isArray(data?.ids) ? data.ids : Array.isArray(data) ? data : [];
+    return [...new Set(ids.map((id) => String(id || "").trim()).filter((id) => /^\d{4,}$/.test(id)))];
+  } catch {
+    return [];
+  }
+}
+
+async function writeHiddenSourceCardIds(ids = []) {
+  const clean = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || "").trim())
+    .filter((id) => /^\d{4,}$/.test(id)))];
+  await writeJson("source-card-hidden.json", { ids: clean });
+  return clean;
+}
+
+async function readNeteaseAccountPlaylists(base) {
+  const { uid } = await getNeteaseProfile(base);
+  const listUrl = addNeteaseCookie(new URL(`${base}/user/playlist`));
+  listUrl.searchParams.set("uid", String(uid));
+  listUrl.searchParams.set("limit", "1000");
+  listUrl.searchParams.set("offset", "0");
+  const response = await fetch(listUrl);
+  if (!response.ok) throw new Error(`/user/playlist HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.code && data.code !== 200) throw new Error(`/user/playlist API ${data.code}`);
+  const playlists = data.playlist || data.data?.playlist || [];
+  return playlists
+    .map((item) => ({
+      id: String(item?.id || "").trim(),
+      name: String(item?.name || "").trim(),
+      cover: item?.coverImgUrl || item?.picUrl || "",
+      trackCount: Number(item?.trackCount || item?.trackIds?.length || 0)
+    }))
+    .filter((item) => /^\d{4,}$/.test(item.id));
+}
+
 async function readUserNeteasePlaylistIds() {
   try {
     const data = await readJson("netease-playlists.json");
@@ -255,9 +312,14 @@ async function addUserNeteasePlaylistId(id) {
   const clean = String(id || "").trim();
   if (!/^\d{4,}$/.test(clean)) throw new Error("invalid playlist id");
   const ids = await readUserNeteasePlaylistIds();
-  if (!ids.includes(clean)) ids.push(clean);
-  await writeJson("netease-playlists.json", { ids });
-  return ids;
+  const next = ids.filter((item) => item !== clean);
+  next.unshift(clean);
+  await writeJson("netease-playlists.json", { ids: next });
+  const hidden = await readHiddenSourceCardIds();
+  if (hidden.includes(clean)) await writeHiddenSourceCardIds(hidden.filter((item) => item !== clean));
+  const order = await readSourceCardOrder();
+  await writeSourceCardOrder([clean, ...order.filter((item) => item !== clean)]);
+  return next;
 }
 
 async function removeUserNeteasePlaylistId(id) {
@@ -266,7 +328,19 @@ async function removeUserNeteasePlaylistId(id) {
   const ids = await readUserNeteasePlaylistIds();
   const next = ids.filter((item) => item !== clean);
   await writeJson("netease-playlists.json", { ids: next });
+  const hidden = await readHiddenSourceCardIds();
+  if (!hidden.includes(clean)) await writeHiddenSourceCardIds([...hidden, clean]);
+  const order = await readSourceCardOrder();
+  await writeSourceCardOrder(order.filter((item) => item !== clean));
   return next;
+}
+
+async function reorderSourceCardIds(ids = []) {
+  const desired = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || "").trim())
+    .filter((id) => /^\d{4,}$/.test(id)))];
+  await writeSourceCardOrder(desired);
+  return desired;
 }
 
 async function readHomeTasks() {
@@ -1723,14 +1797,36 @@ async function readNeteaseSourceCards(extraPlaylistIds = []) {
     .then((item) => cardFromItem("personal_fm", "私人雷达", item))
     .catch(() => cardFromItem("personal_fm", "私人雷达", null)));
   const userPlaylistIds = await readUserNeteasePlaylistIds();
-  const playlistIds = [...new Set([...NETEASE_IMPORTED_PLAYLIST_IDS, ...userPlaylistIds, ...extraPlaylistIds]
+  const sourceCardOrder = await readSourceCardOrder();
+  const hiddenPlaylistIds = await readHiddenSourceCardIds();
+  let accountPlaylistIds = [];
+  let accountPlaylistMeta = new Map();
+  try {
+    const accountPlaylists = await readNeteaseAccountPlaylists(base);
+    accountPlaylistIds = accountPlaylists
+      .map((item) => item.id)
+      .filter((id) => id !== String(NETEASE_LIBRARY_PLAYLIST_ID || "").trim() && id !== String(NETEASE_PERSONAL_RADAR_ID || "").trim());
+    accountPlaylistMeta = new Map(accountPlaylists.map((item) => [item.id, item]));
+  } catch {}
+  const playlistIds = [...new Set([...userPlaylistIds, ...extraPlaylistIds, ...NETEASE_IMPORTED_PLAYLIST_IDS, ...accountPlaylistIds]
     .map((id) => String(id || "").trim())
-    .filter((id) => /^\d{4,}$/.test(id)))];
-  for (const playlistId of playlistIds) {
-    const fallbackName = NETEASE_PLAYLIST_NAMES[playlistId] || `Playlist ${playlistId}`;
-    tasks.push(readNeteasePlaylistTracks(base, { id: playlistId, name: fallbackName })
+    .filter((id) => /^\d{4,}$/.test(id) && !hiddenPlaylistIds.includes(id)))];
+  const orderedPlaylistIds = [
+    ...sourceCardOrder.filter((id) => playlistIds.includes(id)),
+    ...playlistIds.filter((id) => !sourceCardOrder.includes(id))
+  ];
+  for (const playlistId of orderedPlaylistIds) {
+    const accountMeta = accountPlaylistMeta.get(playlistId);
+    const fallbackName = NETEASE_PLAYLIST_NAMES[playlistId] || accountMeta?.name || `Playlist ${playlistId}`;
+    tasks.push(readNeteasePlaylistCard(base, {
+      id: playlistId,
+      name: fallbackName,
+      coverImgUrl: accountMeta?.cover || "",
+      picUrl: accountMeta?.cover || "",
+      trackCount: accountMeta?.trackCount || 0
+    })
       .then((item) => {
-        item.source.name = NETEASE_PLAYLIST_NAMES[playlistId] || item.source.name || fallbackName;
+        item.source.name = NETEASE_PLAYLIST_NAMES[playlistId] || accountMeta?.name || item.source.name || fallbackName;
         return cardFromItem(`playlist-${playlistId}`, item.source.name, item);
       })
       .catch(() => cardFromItem(`playlist-${playlistId}`, fallbackName, null)));
@@ -5032,6 +5128,10 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "DELETE" && pathname === "/api/tasks") {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    let body = {};
+    try {
+      body = await parseBody(req);
+    } catch {}
     return json(res, { tasks: await deleteHomeTask(url.searchParams.get("id") || body.id) });
   }
   if (req.method === "GET" && pathname === "/api/lyric") {
@@ -5131,6 +5231,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && pathname === "/api/netease-source-cards") {
     try {
+      const body = await parseBody(req);
       await addUserNeteasePlaylistId(body.id || body.playlistId);
       return json(res, await readNeteaseSourceCards());
     } catch (error) {
@@ -5140,10 +5241,23 @@ async function handleApi(req, res, pathname) {
   if (req.method === "DELETE" && pathname === "/api/netease-source-cards") {
     const url = new URL(req.url, `http://${req.headers.host}`);
     try {
+      let body = {};
+      try {
+        body = await parseBody(req);
+      } catch {}
       await removeUserNeteasePlaylistId(url.searchParams.get("id") || body.id || body.playlistId);
       return json(res, await readNeteaseSourceCards());
     } catch (error) {
       return json(res, { error: error.message || "invalid playlist id" }, 400);
+    }
+  }
+  if (req.method === "POST" && pathname === "/api/netease-source-cards/order") {
+    try {
+      const body = await parseBody(req);
+      await reorderSourceCardIds(body.ids);
+      return json(res, await readNeteaseSourceCards());
+    } catch (error) {
+      return json(res, { error: error.message || "invalid source order" }, 400);
     }
   }
   if (req.method === "GET" && pathname === "/api/netease-playlist") {

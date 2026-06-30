@@ -8,31 +8,41 @@
     <meta property="og:title" content="Claudio AI Radio">
     <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
     <meta property="og:type" content="website">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="manifest" href="/manifest.webmanifest">
     <style>
       .desktop-startup-gate{
         position:fixed;
-        inset:0;
+        top:50%;
+        left:50%;
+        transform:translate(-50%,-50%);
         z-index:9999;
         display:none;
         place-items:center;
-        background:radial-gradient(circle at top, #131a22 0%, #0b0f14 48%, #050706 100%);
+        background:transparent;
         color:#f5efe6;
         transition:opacity .28s ease, visibility .28s ease;
       }
       html.desktop-shell-starting .desktop-startup-gate{display:grid}
+      html.desktop-shell-starting,
+      html.desktop-shell-starting body{background:transparent !important}
+      html.desktop-shell-starting .shell{visibility:hidden}
       .desktop-startup-gate.is-ready{opacity:0;visibility:hidden;pointer-events:none}
-      .desktop-startup-gate__inner{display:grid;gap:14px;justify-items:center;text-align:center;padding:24px}
-      .desktop-startup-gate__dot{width:10px;height:10px;border-radius:999px;background:#d94d4d;box-shadow:0 0 0 10px rgba(217,77,77,.12)}
-      .desktop-startup-gate__title{margin:0;font-size:30px;font-weight:760;line-height:1.1}
-      .desktop-startup-gate__text{margin:0;color:rgba(245,239,230,.68);font-size:14px;line-height:1.5}
-      .desktop-startup-gate__progress{display:grid;gap:8px;width:min(320px,72vw)}
-      .desktop-startup-gate__percent{font-size:13px;line-height:1;color:rgba(245,239,230,.82);justify-self:end}
-      .desktop-startup-gate__bar{width:100%;height:6px;border-radius:999px;background:rgba(245,239,230,.12);overflow:hidden}
-      .desktop-startup-gate__bar-fill{width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#d94d4d 0%,#f4b183 100%);transition:width .24s ease}
+      .desktop-startup-gate__inner{position:relative;width:min(520px,calc(100vw - 80px));display:grid;grid-template-rows:auto auto 1fr auto;justify-items:center;text-align:center;gap:12px;padding:24px 28px 18px;border-radius:24px;background:linear-gradient(180deg,#171c24 0%,#141922 100%);border:1px solid rgba(255,255,255,.06);box-shadow:0 20px 48px rgba(0,0,0,.4)}
+      .desktop-startup-gate__dot{width:56px;height:56px;border-radius:18px;background:linear-gradient(180deg,#f4f6fb 0%,#eef2ff 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.65),0 10px 24px rgba(0,0,0,.18);position:relative}
+      .desktop-startup-gate__dot::before{content:"";position:absolute;inset:16px;border-radius:12px;background:linear-gradient(135deg,#7fb8ff 0%,#79f0e8 100%);opacity:.95;mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M8 38c4 0 6-3 7-8l3-14c1-4 3-6 6-6s5 2 6 6l4 18c1 4 3 6 6 6 4 0 6-3 7-8l3-14c1-4 3-6 6-6h6v6h-4c-1 0-2 1-3 3l-3 14c-2 8-6 13-12 13-5 0-9-3-11-9l-4-17-4 17c-2 6-6 9-11 9-6 0-10-5-12-13l-2-10c-1-4-2-7-5-7H0v-6h8c5 0 8 4 10 12l2 10c1 2 2 5 4 5Z" fill="black"/></svg>') center/contain no-repeat}
+      .desktop-startup-gate__title{margin:2px 0 0;font-size:32px;font-weight:780;line-height:1.06;letter-spacing:0}
+      .desktop-startup-gate__subtitle{margin:0;color:rgba(245,239,230,.58);font-size:13px;line-height:1.45}
+      .desktop-startup-gate__spacer{width:100%;min-height:28px}
+      .desktop-startup-gate__progress{display:grid;gap:8px;width:100%;align-self:end}
+      .desktop-startup-gate__meta{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%}
+      .desktop-startup-gate__text{margin:0;color:rgba(245,239,230,.62);font-size:14px;line-height:1.5;text-align:left}
+      .desktop-startup-gate__percent{font-size:13px;line-height:1;color:rgba(245,239,230,.76)}
+      .desktop-startup-gate__bar{width:100%;height:3px;border-radius:999px;background:rgba(143,156,255,.16);overflow:hidden}
+      .desktop-startup-gate__bar-fill{width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#7e8cff 0%,#7fbcff 35%,#79f0e8 100%);transition:width .24s ease}
     </style>
     <script>
-      if (new URLSearchParams(location.search).get("desktop") === "1") document.documentElement.classList.add("desktop-shell-starting");
+      // Desktop startup is now owned by the native splash window.
     </script>
     <link rel="stylesheet" href="/styles.css?v=354">
     <title>Claudio AI Radio</title>
@@ -41,16 +51,29 @@
     <div id="desktopStartupGate" class="desktop-startup-gate" aria-hidden="true">
       <div class="desktop-startup-gate__inner">
         <div class="desktop-startup-gate__dot"></div>
-        <h1 class="desktop-startup-gate__title">Claudio AI Radio</h1>
+        <h1 class="desktop-startup-gate__title">Claudio AI Radio Desktop</h1>
+        <p class="desktop-startup-gate__subtitle">Local music console and AI radio</p>
+        <div class="desktop-startup-gate__spacer" aria-hidden="true"></div>
         <div class="desktop-startup-gate__progress">
-          <span class="desktop-startup-gate__percent">0%</span>
+          <div class="desktop-startup-gate__meta">
+            <p class="desktop-startup-gate__text">&#27491;&#22312;&#36830;&#25509;&#25773;&#25918;&#22120;...</p>
+            <span class="desktop-startup-gate__percent">0%</span>
+          </div>
           <div class="desktop-startup-gate__bar"><div class="desktop-startup-gate__bar-fill"></div></div>
         </div>
-        <p class="desktop-startup-gate__text">正在载入播放器...</p>
       </div>
     </div>
     <a class="skip-link" href="#home">跳到内容</a>
     <main class="shell">
+      <div id="desktopWindowBar" class="desktop-window-bar hidden" aria-hidden="true">
+        <div class="desktop-window-drag"></div>
+        <div class="desktop-window-actions" aria-label="窗口控制">
+          <button type="button" id="desktopSettingsBtn" class="desktop-settings-button hidden" aria-label="Settings" title="Settings">&#9881;</button>
+          <button type="button" id="desktopWinMin" class="desktop-window-button" aria-label="Minimize" title="Minimize">&#8722;</button>
+          <button type="button" id="desktopWinMax" class="desktop-window-button" aria-label="Maximize" title="Maximize">&#9633;</button>
+          <button type="button" id="desktopWinClose" class="desktop-window-button close" aria-label="Close" title="Close">&times;</button>
+        </div>
+      </div>
       <section class="player" aria-label="AI radio player">
         <div class="cover" id="cover" role="button" tabindex="0" aria-label="打开沉浸式歌词">
           <img id="coverArt" class="cover-art" alt="">
@@ -119,8 +142,6 @@
       </section>
 
       <section class="panel home-panel" id="home" data-panel>
-        <div class="home-weather" id="homeWeather"></div>
-        <button type="button" id="desktopSettingsBtn" class="desktop-settings-button hidden" aria-label="桌面版设置" title="桌面版设置">⚙</button>
         <section class="home-card home-sources" aria-label="歌单入口">
           <div class="home-card-head">
             <h3>歌单</h3>
@@ -153,8 +174,11 @@
         </section>
         <section class="home-card home-tasks" aria-label="日程">
           <div class="home-card-head">
-            <h3>日程</h3>
-            <button type="button" id="homeTaskAdd" aria-label="添加日程">+</button>
+            <h3>Schedule</h3>
+            <div class="home-tasks-head-actions">
+              <div class="home-weather" id="homeWeather"></div>
+              <button type="button" id="homeTaskAdd" aria-label="Add schedule">+</button>
+            </div>
           </div>
           <form id="homeTaskForm" class="home-task-form hidden">
             <input id="homeTaskInput" type="text" autocomplete="off" placeholder="添加一条日程">
@@ -197,7 +221,6 @@
             <h3>歌词</h3>
             <div class="desktop-top-tools" id="desktopTopTools">
               <span id="weather">天气</span>
-              <button type="button" id="desktopSettingsBtn" class="desktop-settings-button hidden" aria-label="桌面版设置" title="桌面版设置">⚙</button>
             </div>
           </div>
         </div>

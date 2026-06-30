@@ -192,6 +192,10 @@ const els = {
   duration: $("#duration"),
   weather: $("#weather"),
   desktopTopTools: $("#desktopTopTools"),
+  desktopWindowBar: $("#desktopWindowBar"),
+  desktopWinMin: $("#desktopWinMin"),
+  desktopWinMax: $("#desktopWinMax"),
+  desktopWinClose: $("#desktopWinClose"),
   desktopSettingsBtn: $("#desktopSettingsBtn"),
   desktopSettingsModal: $("#desktopSettingsModal"),
   desktopSettingsBackdrop: $("#desktopSettingsBackdrop"),
@@ -279,10 +283,21 @@ function ensureHomePlaylistSearchUi() {
     searchButton = document.createElement("button");
     searchButton.type = "button";
     searchButton.id = "homePlaylistSearchBtn";
-    searchButton.setAttribute("aria-label", "搜索歌曲、作者、专辑");
-    searchButton.title = "搜索歌曲、作者、专辑";
-    searchButton.textContent = "⌕";
+    searchButton.setAttribute("aria-label", "Search songs, artists, albums");
+    searchButton.title = "Search songs, artists, albums";
+    searchButton.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="5.5" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M16 16L20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>`;
     actions.insertBefore(searchButton, addButton);
+  }
+
+  let sortButton = $("#homePlaylistSortBtn");
+  if (!sortButton) {
+    sortButton = document.createElement("button");
+    sortButton.type = "button";
+    sortButton.id = "homePlaylistSortBtn";
+    sortButton.setAttribute("aria-label", "Edit playlists");
+    sortButton.title = "Edit playlists";
+    sortButton.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M12 4L8.5 7.5H11v9h2v-9h2.5L12 4Z" fill="currentColor"></path><path d="M12 20l3.5-3.5H13v-9h-2v9H8.5L12 20Z" fill="currentColor"></path></svg>`;
+    actions.appendChild(sortButton);
   }
 
   let searchForm = $("#homePlaylistSearch");
@@ -291,9 +306,9 @@ function ensureHomePlaylistSearchUi() {
     searchForm.id = "homePlaylistSearch";
     searchForm.className = "home-playlist-form hidden";
     searchForm.innerHTML = `
-      <input id="homePlaylistSearchInput" type="text" autocomplete="off" placeholder="搜索歌曲、作者、专辑">
-      <button type="submit">搜索</button>
-      <button type="button" id="homePlaylistSearchCancel" aria-label="取消搜索">取消</button>
+      <input id="homePlaylistSearchInput" type="text" autocomplete="off" placeholder="Search songs, artists, albums">
+      <button type="submit">Search</button>
+      <button type="button" id="homePlaylistSearchCancel" aria-label="Cancel search">Cancel</button>
     `;
     importForm.parentElement?.insertBefore(searchForm, importForm);
   }
@@ -302,12 +317,20 @@ function ensureHomePlaylistSearchUi() {
   importForm.classList.remove("home-playlist-import");
 
   els.homePlaylistSearchBtn = searchButton;
+  els.homePlaylistSortBtn = sortButton;
   els.homePlaylistSearch = searchForm;
   els.homePlaylistSearchInput = $("#homePlaylistSearchInput");
   els.homePlaylistSearchCancel = $("#homePlaylistSearchCancel");
 }
 
 ensureHomePlaylistSearchUi();
+
+function updateHomePlaylistSortButton() {
+  if (!els.homePlaylistSortBtn) return;
+  els.homePlaylistSortBtn.classList.toggle("active", homePlaylistSortMode);
+  els.homePlaylistSortBtn.setAttribute("aria-pressed", homePlaylistSortMode ? "true" : "false");
+  els.homePlaylistSortBtn.title = homePlaylistSortMode ? "Done editing" : "Edit playlists";
+}
 
 function ensureSequenceControlsUi() {
   const homeQueueActions = document.querySelector(".home-queue-actions");
@@ -461,6 +484,8 @@ let playlistOpenedFromHome = false;
 let currentSongidSource = {};
 let currentVolume = loadStoredVolume();
 let volumeSyncTimer = 0;
+let currentHomePlaylistItems = [];
+let homePlaylistSortMode = false;
 
 function isLibraryLikedTrack(track = {}) {
   if (typeof track?.liked === "boolean") return track.liked;
@@ -891,12 +916,23 @@ function fallbackHomePlaylists() {
 
 function renderHomePlaylists(items = fallbackHomePlaylists()) {
   if (!els.homePlaylistGrid) return;
-  els.homePlaylistGrid.innerHTML = items.map((item) => {
+  currentHomePlaylistItems = Array.isArray(items) ? items.map((item) => ({ ...item })) : [];
+  updateHomePlaylistSortButton();
+  els.homePlaylistGrid.innerHTML = currentHomePlaylistItems.map((item, index) => {
     const cover = normalizeCoverUrl(item.cover || "");
     const style = cover ? ` style="--home-playlist-cover: url('${cover.replace(/'/g, "%27")}')"` : "";
+    const source = String(item.source || item.id || "");
+    const sortable = homePlaylistSortMode && source.startsWith("playlist-");
+    const sortTools = sortable ? `
+        <span class="home-playlist-sort-actions">
+          <span class="home-playlist-sort-button" data-sort-move="prev" data-playlist-source="${escapeHtml(source)}" title="Move up" aria-label="Move up">&uarr;</span>
+          <span class="home-playlist-sort-button" data-sort-move="next" data-playlist-source="${escapeHtml(source)}" title="Move down" aria-label="Move down">&darr;</span>
+          <span class="home-playlist-sort-button danger" data-delete-playlist-source="${escapeHtml(source)}" title="Delete playlist" aria-label="Delete playlist">&times;</span>
+        </span>` : "";
     return `
-      <button type="button" class="home-playlist-card ${cover ? "has-cover" : ""}" data-source="${escapeHtml(item.source || item.id)}"${style}>
+      <button type="button" class="home-playlist-card ${cover ? "has-cover" : ""} ${sortable ? "sortable" : ""}" data-source="${escapeHtml(source)}" data-playlist-index="${index}"${style}>
         ${cover ? `<img class="home-playlist-preload" src="${escapeHtml(cover)}" alt="" loading="eager" decoding="async" aria-hidden="true" style="display:none">` : ""}
+        ${sortTools}
         <strong>${escapeHtml(item.name || item.id)}</strong>
       </button>
     `;
@@ -1064,12 +1100,53 @@ async function importSongidPlaylist(id) {
   toggleSongidSourceImport(false);
 }
 
+async function persistHomePlaylistOrder() {
+  const ids = currentHomePlaylistItems
+    .map((item) => String(item.source || item.id || ""))
+    .filter((source) => source.startsWith("playlist-"))
+    .map((source) => source.replace("playlist-", ""));
+  const data = await api("/api/netease-source-cards/order", {
+    method: "POST",
+    body: JSON.stringify({ ids })
+  });
+  const remote = (data.cards || []).map((card) => ({ id: card.id, source: card.id, name: card.name, cover: card.cover }));
+  const merged = mergeHomePlaylists(fallbackHomePlaylists(), remote);
+  currentHomePlaylistItems = merged;
+  renderHomePlaylists(merged);
+  renderSongidSourcePlaylists(merged);
+  refreshSourceCardCaptions();
+}
+
+async function moveHomePlaylist(source, direction) {
+  const clean = String(source || "");
+  const index = currentHomePlaylistItems.findIndex((item) => String(item.source || item.id || "") === clean);
+  if (index < 0) return;
+  const step = direction === "prev" ? -1 : 1;
+  let target = index + step;
+  while (target >= 0 && target < currentHomePlaylistItems.length) {
+    const candidate = currentHomePlaylistItems[target];
+    const candidateSource = String(candidate?.source || candidate?.id || "");
+    if (candidateSource.startsWith("playlist-")) break;
+    target += step;
+  }
+  if (target < 0 || target >= currentHomePlaylistItems.length) return;
+  const next = currentHomePlaylistItems.slice();
+  const [item] = next.splice(index, 1);
+  next.splice(target, 0, item);
+  currentHomePlaylistItems = next;
+  renderHomePlaylists(next);
+  renderSongidSourcePlaylists(next);
+  try {
+    await persistHomePlaylistOrder();
+  } catch (error) {
+    showTransientStatus(error.message || "Action failed");
+  }
+}
+
 async function deleteSongidPlaylistSource(source) {
   const clean = String(source || "");
   if (!clean.startsWith("playlist-") || protectedSongidSources.has(clean)) return;
   const id = clean.replace("playlist-", "");
-  const ok = window.confirm("删除这个导入的歌单入口？");
-  if (!ok) return;
   try {
     const data = await api(`/api/netease-source-cards?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     const remote = (data.cards || []).map((card) => ({ id: card.id, source: card.id, name: card.name, cover: card.cover }));
@@ -1077,9 +1154,9 @@ async function deleteSongidPlaylistSource(source) {
     renderHomePlaylists(items);
     renderSongidSourcePlaylists(items);
     refreshSourceCardCaptions();
-    showTransientStatus("已删除歌单入口");
+    showTransientStatus("Playlist removed");
   } catch (error) {
-    showTransientStatus(error.message || "删除失败");
+    showTransientStatus(error.message || "Delete failed");
   }
 }
 
@@ -2712,14 +2789,15 @@ if (isDesktopShell) {
 
 function setDesktopStartupProgress(progress, detail = "正在载入播放器...") {
   if (!isDesktopShell) return;
-  const gate = desktopStartupGate;
-  if (!gate) return;
   const safeProgress = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
   if (safeProgress < desktopStartupProgress) return;
   desktopStartupProgress = safeProgress;
-  const label = gate?.querySelector(".desktop-startup-gate__percent");
-  const text = gate?.querySelector(".desktop-startup-gate__text");
-  const fill = gate?.querySelector(".desktop-startup-gate__bar-fill");
+  window.claudioDesktop?.setStartupProgress?.(safeProgress, detail).catch(() => {});
+  const gate = desktopStartupGate;
+  if (!gate) return;
+  const label = gate.querySelector(".desktop-startup-gate__percent");
+  const text = gate.querySelector(".desktop-startup-gate__text");
+  const fill = gate.querySelector(".desktop-startup-gate__bar-fill");
   if (label) label.textContent = `${safeProgress}%`;
   if (text) text.textContent = detail;
   if (fill) fill.style.width = `${safeProgress}%`;
@@ -2727,6 +2805,7 @@ function setDesktopStartupProgress(progress, detail = "正在载入播放器..."
 
 function ensureDesktopStartupGate() {
   if (!isDesktopShell || desktopStartupGate) return desktopStartupGate;
+  if (window.claudioDesktop?.notifyShellReady) return null;
   const existingGate = document.getElementById("desktopStartupGate");
   if (existingGate) {
     desktopStartupGate = existingGate;
@@ -2734,94 +2813,20 @@ function ensureDesktopStartupGate() {
     logDesktopClient("startup-gate", "reused-static-gate", describeDesktopClientState());
     return desktopStartupGate;
   }
-  const style = document.createElement("style");
-  style.id = "desktopStartupGateStyle";
-  style.textContent = `
-    .desktop-startup-gate{
-      position:fixed;
-      inset:0;
-      z-index:9999;
-      display:grid;
-      place-items:center;
-      background:radial-gradient(circle at top, #131a22 0%, #0b0f14 48%, #050706 100%);
-      color:#f5efe6;
-      transition:opacity .28s ease, visibility .28s ease;
+  return null;
+}
+
+async function syncDesktopWindowState() {
+  if (!isDesktopShell) return;
+  try {
+    const state = await window.claudioDesktop?.getWindowState?.();
+    const maximized = Boolean(state?.maximized);
+    if (els.desktopWinMax) {
+      els.desktopWinMax.textContent = maximized ? "❐" : "□";
+      els.desktopWinMax.setAttribute("aria-label", maximized ? "还原" : "最大化");
+      els.desktopWinMax.title = maximized ? "还原" : "最大化";
     }
-    .desktop-startup-gate.is-ready{
-      opacity:0;
-      visibility:hidden;
-      pointer-events:none;
-    }
-    .desktop-startup-gate__inner{
-      display:grid;
-      gap:14px;
-      justify-items:center;
-      text-align:center;
-      padding:24px;
-    }
-    .desktop-startup-gate__dot{
-      width:10px;
-      height:10px;
-      border-radius:999px;
-      background:#d94d4d;
-      box-shadow:0 0 0 10px rgba(217,77,77,.12);
-    }
-    .desktop-startup-gate__title{
-      margin:0;
-      font-size:30px;
-      font-weight:760;
-      line-height:1.1;
-    }
-    .desktop-startup-gate__text{
-      margin:0;
-      color:rgba(245,239,230,.68);
-      font-size:14px;
-      line-height:1.5;
-    }
-    .desktop-startup-gate__progress{
-      display:grid;
-      gap:8px;
-      width:min(320px,72vw);
-    }
-    .desktop-startup-gate__percent{
-      font-size:13px;
-      line-height:1;
-      color:rgba(245,239,230,.82);
-      justify-self:end;
-    }
-    .desktop-startup-gate__bar{
-      width:100%;
-      height:6px;
-      border-radius:999px;
-      background:rgba(245,239,230,.12);
-      overflow:hidden;
-    }
-    .desktop-startup-gate__bar-fill{
-      width:0%;
-      height:100%;
-      border-radius:inherit;
-      background:linear-gradient(90deg,#d94d4d 0%,#f4b183 100%);
-      transition:width .24s ease;
-    }
-  `;
-  document.head.appendChild(style);
-  desktopStartupGate = document.createElement("div");
-  desktopStartupGate.className = "desktop-startup-gate";
-  desktopStartupGate.innerHTML = `
-    <div class="desktop-startup-gate__inner">
-      <div class="desktop-startup-gate__dot"></div>
-      <h1 class="desktop-startup-gate__title">Claudio AI Radio</h1>
-      <div class="desktop-startup-gate__progress">
-        <span class="desktop-startup-gate__percent">0%</span>
-        <div class="desktop-startup-gate__bar"><div class="desktop-startup-gate__bar-fill"></div></div>
-      </div>
-      <p class="desktop-startup-gate__text">正在载入播放器...</p>
-    </div>
-  `;
-  document.body.appendChild(desktopStartupGate);
-  setDesktopStartupProgress(8, "正在连接播放器...");
-  logDesktopClient("startup-gate", "created", describeDesktopClientState());
-  return desktopStartupGate;
+  } catch {}
 }
 
 function waitForDesktopStartupImages(selector = ".home-playlist-card .home-playlist-preload, .source-card.has-source-cover img") {
@@ -2849,6 +2854,7 @@ function maybeRevealDesktopShell(track) {
   desktopStartupReady = true;
   document.documentElement.classList.remove("desktop-shell-starting");
   gate?.classList.add("is-ready");
+  window.claudioDesktop?.notifyShellReady?.().catch(() => {});
   logDesktopClient("startup-gate", "revealed", describeDesktopClientState());
 }
 
@@ -4297,11 +4303,34 @@ els.homeQueueNext?.addEventListener("click", () => {
   }).catch(() => {});
 });
 els.homePlaylistGrid?.addEventListener("click", (event) => {
+  const moveButton = event.target.closest("[data-sort-move]");
+  if (moveButton?.dataset.playlistSource) {
+    event.preventDefault();
+    event.stopPropagation();
+    moveHomePlaylist(moveButton.dataset.playlistSource, moveButton.dataset.sortMove).catch((error) => {
+      showTransientStatus(error.message || "Action failed");
+    });
+    return;
+  }
+  const deleteButton = event.target.closest("[data-delete-playlist-source]");
+  if (deleteButton?.dataset.deletePlaylistSource) {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteSongidPlaylistSource(deleteButton.dataset.deletePlaylistSource).catch((error) => {
+      showTransientStatus(error.message || "Delete failed");
+    });
+    return;
+  }
   const button = event.target.closest(".home-playlist-card");
   if (!button) return;
+  if (homePlaylistSortMode) return;
   openHomePlaylistSource(button.dataset.source);
 });
 els.homePlaylistSearchBtn?.addEventListener("click", () => toggleHomePlaylistSearch());
+els.homePlaylistSortBtn?.addEventListener("click", () => {
+  homePlaylistSortMode = !homePlaylistSortMode;
+  renderHomePlaylists(currentHomePlaylistItems.length ? currentHomePlaylistItems : fallbackHomePlaylists());
+});
 els.homePlaylistSearchCancel?.addEventListener("click", () => toggleHomePlaylistSearch(false));
 els.homePlaylistSearch?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -5019,12 +5048,28 @@ els.songidResults?.addEventListener("click", async (event) => {
 
 if (isDesktopShell) {
   document.body.classList.add("desktop-shell");
+  els.desktopWindowBar?.classList.remove("hidden");
   els.desktopSettingsBtn?.classList.remove("hidden");
   ensureDesktopStartupGate();
+  syncDesktopWindowState();
 }
 if ("serviceWorker" in navigator && !isDesktopShell) navigator.serviceWorker.register("/sw.js");
 
+els.desktopWinMin?.addEventListener("click", async () => {
+  await window.claudioDesktop?.windowAction?.("minimize");
+});
+
+els.desktopWinMax?.addEventListener("click", async () => {
+  await window.claudioDesktop?.windowAction?.("toggle-maximize");
+  await syncDesktopWindowState();
+});
+
+els.desktopWinClose?.addEventListener("click", async () => {
+  await window.claudioDesktop?.windowAction?.("close");
+});
+
 window.addEventListener("resize", scheduleAlbumReflection);
+window.addEventListener("resize", syncDesktopWindowState);
 els.coverArt?.addEventListener("load", scheduleAlbumReflection);
 window.addEventListener("load", scheduleAlbumReflection);
 window.setTimeout(scheduleAlbumReflection, 800);

@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const APP_PORT = Number(process.env.PORT || 3000);
 const APP_URL = `http://localhost:${APP_PORT}`;
+const APP_API_URL = `http://127.0.0.1:${APP_PORT}`;
 const DESKTOP_BOOT_MIN_MS = 700;
 const DESKTOP_BOOT_SETTLE_MS = 120;
 const DEFAULT_CONFIG = {
@@ -37,6 +38,8 @@ let playerLoadRetryCount = 0;
 let suppressServerExitRestart = false;
 let playerPageLoadedOnce = false;
 let bootScreenFallbackTimer = null;
+let splashWindow;
+let splashProgressValue = 0;
 
 app.setPath("userData", path.join(app.getPath("appData"), "Claudio AI Radio Desktop"));
 app.setAppUserModelId("com.claudio.ai-radio");
@@ -47,6 +50,18 @@ function projectRoot() {
 
 function appIconPath() {
   return path.join(projectRoot(), "build", "icon.ico");
+}
+
+function appIconSvgPath() {
+  return path.join(projectRoot(), "build", "icon.svg");
+}
+
+function appIconSvgMarkup() {
+  try {
+    return fs.readFileSync(appIconSvgPath(), "utf8");
+  } catch {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#171c24"/><circle cx="64" cy="64" r="36" fill="#0d0d0c"/><circle cx="64" cy="64" r="18" fill="#e91f35"/></svg>';
+  }
 }
 
 function desktopDataDir() {
@@ -117,18 +132,7 @@ function describeWindowUrl(window = mainWindow) {
 }
 
 function scheduleBootScreenFallback(reason = "unknown", message = "\u64ad\u653e\u5668\u670d\u52a1\u6b63\u5728\u91cd\u8fde\uff0c\u8bf7\u7a0d\u540e...", delay = 1800) {
-  if (appQuitting || !mainWindow || mainWindow.isDestroyed()) return;
-  if (bootScreenFallbackTimer) return;
-  appendDesktopLog("window", `schedule boot fallback: ${reason}`, `delay=${delay} url=${describeWindowUrl()} loadedOnce=${playerPageLoadedOnce ? 1 : 0}`);
-  bootScreenFallbackTimer = setTimeout(async () => {
-    clearBootScreenFallbackTimer();
-    const healthy = await isAppServerHealthy(1200);
-    appendDesktopLog("window", `run boot fallback: ${reason}`, `healthy=${healthy ? 1 : 0} url=${describeWindowUrl()} loadedOnce=${playerPageLoadedOnce ? 1 : 0}`);
-    if (healthy && playerPageLoadedOnce) return;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      await loadBootScreen(mainWindow, message);
-    }
-  }, delay);
+  appendDesktopLog("window", `skip boot fallback: ${reason}`, `delay=${delay} url=${describeWindowUrl()} loadedOnce=${playerPageLoadedOnce ? 1 : 0}`);
 }
 
 function scheduleServerRestart(reason = "unknown") {
@@ -161,8 +165,6 @@ function schedulePlayerReload(reason = "load-failed") {
       const ready = await waitForServer(8000);
       if (ready && mainWindow && !mainWindow.isDestroyed()) {
         await loadPlayerWindow(mainWindow, { hardReload: true });
-      } else if (mainWindow && !mainWindow.isDestroyed()) {
-        await loadBootScreen(mainWindow, "鎾斁鍣ㄦ湇鍔℃鍦ㄩ噸杩烇紝璇风◢鍚?..");
       }
     } catch (error) {
       appendDesktopLog("window", "reload after failure failed", String(error?.stack || error));
@@ -369,7 +371,14 @@ async function startServer() {
 
 async function loadBootScreen(window, message = "\u6b63\u5728\u542f\u52a8\u64ad\u653e\u5668...") {
   if (!window || window.isDestroyed()) return;
+  splashProgressValue = 0;
   appendDesktopLog("window", "loadBootScreen", `message=${String(message || "").slice(0, 120)} url=${describeWindowUrl(window)} loadedOnce=${playerPageLoadedOnce ? 1 : 0}`);
+  const safeMessage = String(message || "\u6b63\u5728\u542f\u52a8\u64ad\u653e\u5668...")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const safeIconMarkup = appIconSvgMarkup();
   const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -384,78 +393,107 @@ async function loadBootScreen(window, message = "\u6b63\u5728\u542f\u52a8\u64ad\
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: radial-gradient(circle at top, #131a22 0%, #0b0f14 48%, #050706 100%);
+      background: transparent;
       color: #f5efe6;
       font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
     }
     main {
-      width: min(420px, calc(100vw - 48px));
+      position: relative;
+      width: min(680px, calc(100vw - 80px));
       display: grid;
-      gap: 14px;
+      grid-template-rows: auto auto 1fr auto;
       justify-items: center;
       text-align: center;
-      padding: 28px 26px;
-      border-radius: 18px;
-      background: rgba(13, 18, 24, 0.88);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
-      border: 1px solid rgba(245, 239, 230, 0.08);
-      backdrop-filter: blur(8px);
+      gap: 14px;
+      padding: 30px 34px 22px;
+      border-radius: 24px;
+      background: linear-gradient(180deg, #171c24 0%, #141922 100%);
+      border: 1px solid rgba(255,255,255,.06);
+      box-shadow: 0 20px 48px rgba(0,0,0,.4);
+    }
+    .brand {
+      width: 72px;
+      height: 72px;
+      display: grid;
+      place-items: center;
+    }
+    .brand svg {
+      width: 72px;
+      height: 72px;
+      display: block;
     }
     h1 {
-      margin: 0;
-      font-size: 30px;
-      font-weight: 760;
-      line-height: 1.1;
+      margin: 2px 0 0;
+      font-size: 28px;
+      font-weight: 780;
+      line-height: 1.06;
+      letter-spacing: 0;
+      white-space: nowrap;
     }
-    p {
+    .subtitle {
       margin: 0;
-      color: rgba(245, 239, 230, 0.68);
-      font-size: 14px;
+      color: rgba(245,239,230,.58);
+      font-size: 13px;
       line-height: 1.5;
     }
+    .spacer {
+      width: 100%;
+      min-height: 28px;
+    }
     .progress {
-      width: min(280px, 100%);
       display: grid;
       gap: 8px;
+      width: 100%;
+      align-self: end;
+    }
+    .meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+    }
+    .message {
+      margin: 0;
+      color: rgba(245,239,230,.62);
+      font-size: 13px;
+      line-height: 1.5;
+      text-align: left;
     }
     .percent {
-      justify-self: end;
-      color: rgba(245, 239, 230, 0.82);
+      color: rgba(245,239,230,.76);
       font-size: 13px;
       line-height: 1;
     }
     .bar {
       width: 100%;
-      height: 6px;
+      height: 3px;
       border-radius: 999px;
       overflow: hidden;
-      background: rgba(245, 239, 230, 0.12);
+      background: rgba(143,156,255,.16);
     }
     .bar-fill {
       width: 8%;
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, #d94d4d 0%, #f4b183 100%);
+      background: linear-gradient(90deg,#7e8cff 0%,#7fbcff 35%,#79f0e8 100%);
       transition: width .24s ease;
-    }
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: #d94d4d;
-      box-shadow: 0 0 0 10px rgba(217, 77, 77, 0.12);
     }
   </style>
 </head>
 <body>
   <main>
-    <div class="dot"></div>
+    <div class="brand" aria-hidden="true">${safeIconMarkup}</div>
     <h1>Claudio AI Radio Desktop</h1>
+    <p class="subtitle">Local music console and AI radio</p>
+    <div class="spacer" aria-hidden="true"></div>
     <div class="progress" aria-hidden="true">
-      <span id="bootPercent" class="percent">8%</span>
+      <div class="meta">
+        <p id="bootMessage" class="message">${safeMessage}</p>
+        <span id="bootPercent" class="percent">8%</span>
+      </div>
       <div class="bar"><div id="bootBarFill" class="bar-fill"></div></div>
     </div>
-    <p id="bootMessage">${String(message || "\u6b63\u5728\u542f\u52a8\u64ad\u653e\u5668...").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")}</p>
   </main>
 </body>
 </html>`;
@@ -467,6 +505,8 @@ async function updateBootScreenProgress(window, progress = 8, message = "\u6b63\
   const currentUrl = describeWindowUrl(window);
   if (!currentUrl.startsWith("data:text/html")) return;
   const percent = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+  if (percent < splashProgressValue) return;
+  splashProgressValue = percent;
   const safeMessage = JSON.stringify(String(message || ""));
   const script = `(() => {
     const percent = ${percent};
@@ -480,6 +520,53 @@ async function updateBootScreenProgress(window, progress = 8, message = "\u6b63\
   try {
     await window.webContents.executeJavaScript(script, true);
   } catch {}
+}
+
+function createSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) return splashWindow;
+  splashWindow = new BrowserWindow({
+    width: 760,
+    height: 420,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    movable: false,
+    title: "Claudio AI Radio",
+    icon: appIconPath(),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  splashWindow.on("closed", () => {
+    splashWindow = null;
+  });
+  return splashWindow;
+}
+
+async function closeSplashWindow() {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  const window = splashWindow;
+  splashWindow = null;
+  splashProgressValue = 0;
+  try {
+    window.close();
+  } catch {}
+}
+
+async function revealMainWindowFromSplash(reason = "shell-ready") {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+    mainWindow.show();
+    appendDesktopLog("window", "show main after splash", `reason=${reason} url=${describeWindowUrl(mainWindow)}`);
+  }
+  await closeSplashWindow();
 }
 
 async function loadPlayerWindow(window, { hardReload = false } = {}) {
@@ -511,8 +598,11 @@ async function waitForServer(timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const response = await fetch(`${APP_URL}/api/health`, { cache: "no-store" });
-      if (response.ok) return true;
+      const health = await fetch(`${APP_API_URL}/api/health`, { cache: "no-store" });
+      if (health.ok) {
+        const now = await fetch(`${APP_API_URL}/api/now`, { cache: "no-store" });
+        if (now.ok) return true;
+      }
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
@@ -520,7 +610,7 @@ async function waitForServer(timeoutMs = 15000) {
 }
 
 async function desktopFetch(pathname, { method = "GET", body } = {}) {
-  const response = await fetch(`${APP_URL}${pathname}`, {
+  const response = await fetch(`${APP_API_URL}${pathname}`, {
     method,
     cache: "no-store",
     headers: body ? { "content-type": "application/json" } : undefined,
@@ -733,8 +823,11 @@ function createMainWindow() {
     height: 820,
     minWidth: 980,
     minHeight: 680,
+    show: false,
+    frame: false,
+    titleBarStyle: "hidden",
     title: "Claudio AI Radio Desktop",
-    backgroundColor: "#050706",
+    backgroundColor: "#10161d",
     autoHideMenuBar: true,
     icon: appIconPath(),
     webPreferences: {
@@ -782,11 +875,7 @@ function createMainWindow() {
       appendDesktopLog("window", "ignore did-fail-load", `healthy=true loadedOnce=true code=${errorCode}`);
       return;
     }
-    if (!playerPageLoadedOnce) {
-      loadBootScreen(mainWindow, "\u64ad\u653e\u5668\u670d\u52a1\u6b63\u5728\u91cd\u8fde\uff0c\u8bf7\u7a0d\u540e...").catch(() => {});
-    } else {
-      scheduleBootScreenFallback(`did-fail-load:${errorCode}`);
-    }
+    scheduleBootScreenFallback(`did-fail-load:${errorCode}`);
     scheduleServerRestart(`did-fail-load:${errorCode}`);
     schedulePlayerReload(`did-fail-load:${errorCode}`);
   });
@@ -799,8 +888,8 @@ function createMainWindow() {
     lastThumbarSignature = "";
     clearPlayerLoadRetryTimer();
     clearBootScreenFallbackTimer();
+    closeSplashWindow().catch(() => {});
   });
-  loadBootScreen(mainWindow).catch(() => {});
   updateThumbarButtons(true).catch(() => {});
   startThumbarSync();
 }
@@ -975,6 +1064,35 @@ ipcMain.handle("desktop:client-log", async (_event, payload = {}) => {
   return { ok: true };
 });
 
+ipcMain.handle("desktop:window-action", async (_event, action = "") => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, maximized: false };
+  if (action === "minimize") mainWindow.minimize();
+  if (action === "toggle-maximize") {
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+  }
+  if (action === "close") mainWindow.close();
+  return { ok: true, maximized: mainWindow.isMaximized() };
+});
+
+ipcMain.handle("desktop:window-state", async () => ({
+  ok: Boolean(mainWindow && !mainWindow.isDestroyed()),
+  maximized: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized())
+}));
+
+ipcMain.handle("desktop:startup-progress", async (_event, payload = {}) => {
+  const progress = Number(payload.progress || 0);
+  const detail = String(payload.detail || "");
+  await updateBootScreenProgress(splashWindow, progress, detail);
+  return { ok: true };
+});
+
+ipcMain.handle("desktop:shell-ready", async () => {
+  appendDesktopLog("renderer:startup-gate", "shell-ready", `url=${describeWindowUrl(mainWindow)}`);
+  await revealMainWindowFromSplash("renderer-ready");
+  return { ok: true };
+});
+
 ipcMain.handle("desktop:reconnect-services", async () => reconnectDesktopServices());
 
 ipcMain.handle("netease:qr-create", async () => {
@@ -1003,23 +1121,45 @@ app.whenReady().then(async () => {
   installMenu();
   ensureDesktopDataDir();
   createMainWindow();
-  await updateBootScreenProgress(mainWindow, 12, "\u6b63\u5728\u542f\u52a8\u672c\u5730\u670d\u52a1...");
+  createSplashWindow();
+  await loadBootScreen(splashWindow, "\u6b63\u5728\u542f\u52a8\u64ad\u653e\u5668...");
+  if (splashWindow && !splashWindow.isDestroyed() && !splashWindow.isVisible()) {
+    splashWindow.show();
+    appendDesktopLog("window", "show splash screen", `url=${describeWindowUrl(splashWindow)}`);
+  }
+  await updateBootScreenProgress(splashWindow, 12, "\u6b63\u5728\u51c6\u5907\u684c\u9762\u73af\u5883...");
+  await updateBootScreenProgress(splashWindow, 20, "\u6b63\u5728\u542f\u52a8 3000 \u670d\u52a1...");
   await startServer();
-  await updateBootScreenProgress(mainWindow, 28, "\u6b63\u5728\u8fde\u63a5\u64ad\u653e\u5668\u670d\u52a1...");
+  await updateBootScreenProgress(splashWindow, 36, "\u6b63\u5728\u8fde\u63a5\u64ad\u653e\u5668\u670d\u52a1...");
   const [ready, neteaseReady] = await Promise.all([
     waitForServer(),
     startNeteaseApiIfNeeded().catch(() => false)
   ]);
-  await updateBootScreenProgress(mainWindow, 52, "\u6b63\u5728\u68c0\u67e5\u9996\u9875\u6570\u636e...");
+  await updateBootScreenProgress(
+    splashWindow,
+    ready ? 52 : 44,
+    ready ? "\u64ad\u653e\u5668\u670d\u52a1\u5df2\u5c31\u7eea" : "\u64ad\u653e\u5668\u670d\u52a1\u542f\u52a8\u4e2d..."
+  );
+  await updateBootScreenProgress(
+    splashWindow,
+    neteaseReady ? 64 : 58,
+    neteaseReady ? "\u7f51\u6613\u4e91\u670d\u52a1\u5df2\u8fde\u63a5" : "\u6b63\u5728\u540c\u6b65\u7f51\u6613\u4e91\u72b6\u6001..."
+  );
+  await updateBootScreenProgress(splashWindow, 76, "\u6b63\u5728\u7b49\u5f85\u9996\u9875\u52a0\u8f7d...");
   const launchState = ready ? await waitForDesktopLaunchState() : { ready: false, reason: "server-not-ready", payload: null };
+  await updateBootScreenProgress(
+    splashWindow,
+    launchState.ready ? 88 : 82,
+    launchState.ready ? "\u9996\u9875\u6570\u636e\u5df2\u5c31\u7eea" : "\u6b63\u5728\u6253\u5f00\u64ad\u653e\u5668\u754c\u9762..."
+  );
   await waitForBootFloor(bootStartedAt);
   if (ready && mainWindow && !mainWindow.isDestroyed()) {
     await new Promise((resolve) => setTimeout(resolve, DESKTOP_BOOT_SETTLE_MS));
     appendDesktopLog("boot", launchState.ready ? "launch gate ready" : "launch gate timeout", `reason=${launchState.reason}`);
-    await updateBootScreenProgress(mainWindow, 88, launchState.ready ? "\u6b63\u5728\u6253\u5f00\u64ad\u653e\u5668\u754c\u9762..." : "\u6b63\u5728\u8fdb\u5165\u64ad\u653e\u5668\u754c\u9762...");
+    await updateBootScreenProgress(splashWindow, 92, "\u6b63\u5728\u8fdb\u5165\u64ad\u653e\u5668...");
     await loadPlayerWindow(mainWindow);
   } else if (mainWindow && !mainWindow.isDestroyed()) {
-    await loadBootScreen(mainWindow, "\u64ad\u653e\u5668\u542f\u52a8\u8d85\u65f6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5");
+    appendDesktopLog("boot", "startup timeout", "player window not loaded because server was not ready");
   }
   appendDesktopLog("boot", "startup complete", `serverReady=${Boolean(ready)} neteaseReady=${Boolean(neteaseReady)} launchReady=${launchState.ready ? 1 : 0} launchReason=${launchState.reason} url=${describeWindowUrl(mainWindow)} loadedOnce=${playerPageLoadedOnce ? 1 : 0}`);
 });
@@ -1030,6 +1170,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   (async () => {
     stopThumbarSync();
+    await closeSplashWindow();
     await shutdownDesktopLyricsOverlay();
     stopServer();
     if (neteaseApiProcess && !neteaseApiProcess.killed) neteaseApiProcess.kill();

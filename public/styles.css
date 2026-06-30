@@ -638,23 +638,41 @@ input:focus-visible,
 }
 
 .home-panel > #desktopSettingsBtn {
-  position: absolute;
-  top: 28px;
-  right: 32px;
-  z-index: 8;
-  width: 34px;
-  height: 34px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #f7f2ea;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
-}
-
-body:not(.desktop-shell) .home-panel > #desktopSettingsBtn {
   display: none !important;
 }
 
-body.desktop-shell .home-weather {
-  right: 82px;
+.home-tasks-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-card .home-weather {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #aeb7c2;
+  font-size: 13px;
+}
+
+.home-card .home-weather .panel-time {
+  color: #d7dde5;
+  font-size: 13px;
+}
+
+.home-card .home-weather .weather-badge {
+  gap: 8px;
+}
+
+.home-card .home-weather .weather-icon {
+  width: 18px;
+  min-width: 18px;
+}
+
+.home-card .home-weather .weather-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .desktop-settings-button:hover,
@@ -9051,7 +9069,7 @@ body {
   grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.02fr);
   grid-template-rows: 1fr 1.33fr;
   gap: 26px;
-  padding: 84px 32px 32px;
+  padding: 96px 32px 32px;
   overflow: hidden;
 }
 
@@ -9062,12 +9080,114 @@ body {
 .home-weather {
   position: absolute;
   top: 30px;
-  right: 36px;
+  right: 212px;
   display: inline-flex;
   align-items: center;
   gap: 14px;
   color: #aeb7c2;
   font-size: 15px;
+}
+
+body.desktop-shell .desktop-window-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+
+body.desktop-shell .desktop-window-bar.hidden {
+  display: none;
+}
+
+body.desktop-shell .desktop-window-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 176px;
+  height: 36px;
+  -webkit-app-region: drag;
+  pointer-events: auto;
+}
+
+body.desktop-shell .desktop-window-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+body.desktop-shell .desktop-window-button {
+  width: 46px;
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #eef2f6;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+}
+
+body.desktop-shell .desktop-window-actions #desktopSettingsBtn {
+  display: inline-flex !important;
+  width: 36px;
+  height: 32px;
+  margin-right: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #eef2f6;
+  box-shadow: none;
+  font-size: 17px;
+  line-height: 1;
+  padding: 0;
+}
+
+body.desktop-shell .desktop-window-button:hover,
+body.desktop-shell .desktop-window-actions #desktopSettingsBtn:hover {
+  background: rgba(255,255,255,.08);
+}
+
+body.desktop-shell .desktop-window-button.close:hover {
+  background: #c42b1c;
+}
+
+body.desktop-shell #desktopWinMin {
+  font-size: 22px;
+  padding-bottom: 6px;
+}
+
+body.desktop-shell #desktopWinMax {
+  font-size: 15px;
+}
+
+body.desktop-shell #desktopWinClose {
+  font-size: 22px;
+  padding-bottom: 1px;
+}
+
+body.desktop-shell .desktop-window-button:hover {
+  background: rgba(24, 30, 38, .92);
+  border-color: rgba(255,255,255,.14);
+}
+
+body.desktop-shell .desktop-window-button.close:hover {
+  background: #b42318;
+  border-color: #b42318;
 }
 
 .home-weather .panel-time {
@@ -9167,6 +9287,22 @@ body {
   border-radius: 999px;
   font-size: 17px;
   line-height: 1;
+}
+
+#homePlaylistSortBtn {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 999px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+
+#homePlaylistSortBtn.active {
+  background: rgba(217, 77, 77, 0.2);
+  border-color: rgba(217, 77, 77, 0.5);
+  color: #fff4ef;
 }
 
 .home-source-grid {
@@ -9288,6 +9424,47 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-shadow: 0 3px 12px rgba(0, 0, 0, 0.58);
+}
+
+.home-playlist-card.sortable {
+  padding-top: 34px;
+}
+
+.home-playlist-sort-actions {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.home-playlist-sort-button {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(10, 12, 15, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.home-playlist-sort-button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.home-playlist-sort-button.danger {
+  background: rgba(130, 18, 28, 0.62);
+  border-color: rgba(255, 110, 128, 0.42);
+}
+
+.home-playlist-sort-button.danger:hover {
+  background: rgba(166, 26, 38, 0.78);
 }
 
 .home-queue-list,
@@ -10358,17 +10535,19 @@ body.songid-detail-open #songid .songid-results {
   align-content: start !important;
   gap: 14px !important;
   overflow: auto !important;
-  padding: 70px 32px 32px !important;
+  padding: 24px 24px 24px !important;
   border-radius: 26px !important;
   border: 1px solid rgba(255, 255, 255, 0.07) !important;
   background: #10161d !important;
 }
 
 body.songid-detail-open #songid .songid-card {
-  min-height: 58px !important;
-  grid-template-columns: 58px minmax(0, 1fr) auto auto auto !important;
-  gap: 20px !important;
-  padding: 0 18px 0 28px !important;
+  min-height: 64px !important;
+  display: grid !important;
+  align-items: center !important;
+  grid-template-columns: 28px 48px minmax(0, 1fr) auto auto auto !important;
+  gap: 14px !important;
+  padding: 8px 16px !important;
   border: 0 !important;
   border-radius: 12px !important;
   background: #151c24 !important;
@@ -10377,7 +10556,13 @@ body.songid-detail-open #songid .songid-card {
 
 body.songid-detail-open #songid .songid-card img,
 body.songid-detail-open #songid .songid-cover-fallback {
-  display: none !important;
+  display: block !important;
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 9px !important;
+  object-fit: cover !important;
+  overflow: hidden !important;
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
 body.songid-detail-open #songid .songid-card::before {
@@ -10440,7 +10625,19 @@ body.songid-detail-open #songid .songid-card small {
   }
 
   body.songid-detail-open #songid .songid-results {
-    padding: 22px 14px 18px !important;
+    padding: 18px 12px 16px !important;
+  }
+
+  body.songid-detail-open #songid .songid-card {
+    grid-template-columns: 24px 40px minmax(0, 1fr) auto auto auto !important;
+    gap: 10px !important;
+    padding: 8px 10px !important;
+  }
+
+  body.songid-detail-open #songid .songid-card img,
+  body.songid-detail-open #songid .songid-cover-fallback {
+    width: 40px !important;
+    height: 40px !important;
   }
 }
 
