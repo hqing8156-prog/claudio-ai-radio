@@ -4,7 +4,7 @@ Local-first NetEase Cloud Music radio with lyrics, playlist queue, DeepSeek chat
 
 This project is vanilla HTML/CSS/JS plus a Node.js server. It is not React or Vue.
 
-## Requirements
+## Requirements For Source Run
 
 - Windows 10/11
 - Node.js 18+
@@ -51,23 +51,45 @@ Open:
 http://localhost:3000
 ```
 
-## Lightweight Windows Launcher
+## Portable Windows Package
 
-Build the launcher exe:
+Build the launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-launcher.ps1
 ```
 
+Build the portable package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-portable-release.ps1
+```
+
 This creates:
 
 ```text
-ClaudioRadioLauncher.exe
+release/Claudio-AI-Radio-2.0.0-portable/
+release/Claudio-AI-Radio-2.0.0-portable.zip
 ```
 
-Put the exe in the project root and run it. It starts `start-radio.ps1` and opens the browser after the local server becomes ready.
+The portable package includes:
 
-The launcher does not bundle Node.js or NetEase API. Users still need Node.js and their own `radio-secrets.ps1`.
+- `ClaudioRadioLauncher.exe`
+- bundled `node.exe` for the 3000 app
+- bundled NetEase API `app.exe` for port 4000
+- frontend assets and starter data
+
+The only file that is still intentionally local is `radio-secrets.ps1`. Do not upload your personal cookie to GitHub.
+
+After extracting the zip on another machine:
+
+1. Copy `radio-secrets.example.ps1` to `radio-secrets.ps1`
+2. Fill in `NETEASE_COOKIE`
+3. Double-click `ClaudioRadioLauncher.exe`
+
+## Lightweight Windows Launcher
+
+`ClaudioRadioLauncher.exe` starts `start-radio.ps1`, waits for `http://localhost:3000/api/health`, then opens the browser automatically.
 
 ## Import Playlists
 
@@ -100,4 +122,5 @@ The repository includes an empty `data/playlists.json` template. Users should im
 - `scripts/import-netease-playlist.js`: optional NetEase playlist import script
 - `scripts/ClaudioRadioLauncher.cs`: lightweight Windows launcher source
 - `scripts/build-launcher.ps1`: launcher build script
+- `scripts/build-portable-release.ps1`: portable release build script
 - `radio-secrets.example.ps1`: local secrets template

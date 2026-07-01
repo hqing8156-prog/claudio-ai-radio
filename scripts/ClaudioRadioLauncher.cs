@@ -38,10 +38,11 @@ internal static class ClaudioRadioLauncher
             var server = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = "-NoExit -NoProfile -ExecutionPolicy Bypass -File \"" + startScript + "\"",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + startScript + "\"",
                 WorkingDirectory = projectDir,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Normal
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
             };
             Process.Start(server);
         }
