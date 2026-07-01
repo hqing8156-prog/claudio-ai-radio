@@ -9,11 +9,11 @@
     <meta property="og:description" content="A private AI radio console for playlists, lyrics, and music chat.">
     <meta property="og:type" content="website">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="stylesheet" href="/styles.css?v=201">
+    <link rel="stylesheet" href="/styles.css?v=202">
     <title>Claudio AI Radio</title>
   </head>
   <body>
-    <a class="skip-link" href="#profile">跳到内容</a>
+    <a class="skip-link" href="#profile">&#x8DF3;&#x5230;&#x5185;&#x5BB9;</a>
     <main class="shell">
       <section class="player" aria-label="AI radio player">
         <div class="cover" id="cover">
@@ -39,12 +39,12 @@
         <div class="controls">
           <button id="favoritePlaylistBtn" class="favorite-playlist-button" aria-label="Add to NetEase playlist" title="Add to NetEase playlist">+</button>
           <div id="favoritePlaylistMenu" class="favorite-playlist-menu hidden" role="menu"></div>
-          <button id="modeBtn" class="mode-button" aria-label="切换播放方式" title="切换播放方式">⇥</button>
-          <button id="prevBtn" class="icon-button" aria-label="Previous track" title="Previous">‹</button>
-          <button id="playBtn" class="play" aria-label="Play" title="Play">▶</button>
-          <button id="nextBtn" class="icon-button" aria-label="Next track" title="Next">›</button>
-          <button id="likeBtn" class="like-current" aria-label="红心当前歌曲" title="红心到网易云">♡</button>
-          <button id="sequenceBtn" class="sequence-button" aria-label="播放序列" title="播放序列"></button>
+          <button id="modeBtn" class="mode-button" aria-label="&#x5207;&#x6362;&#x64AD;&#x653E;&#x65B9;&#x5F0F;" title="&#x5207;&#x6362;&#x64AD;&#x653E;&#x65B9;&#x5F0F;">&#x21E5;</button>
+          <button id="prevBtn" class="icon-button" aria-label="Previous track" title="Previous">&#x2039;</button>
+          <button id="playBtn" class="play" aria-label="Play" title="Play">&#x25B6;</button>
+          <button id="nextBtn" class="icon-button" aria-label="Next track" title="Next">&#x203A;</button>
+          <button id="likeBtn" class="like-current" aria-label="&#x7EA2;&#x5FC3;&#x5F53;&#x524D;&#x6B4C;&#x66F2;" title="&#x7EA2;&#x5FC3;&#x5230;&#x7F51;&#x6613;&#x4E91;">&#x2661;</button>
+          <button id="sequenceBtn" class="sequence-button" aria-label="&#x64AD;&#x653E;&#x5E8F;&#x5217;" title="&#x64AD;&#x653E;&#x5E8F;&#x5217;"></button>
         </div>
 
         <div class="progress">
@@ -54,10 +54,10 @@
         </div>
 
         <nav class="tabs" aria-label="Views">
-          <button data-view="playlist">歌单</button>
-          <button class="active" data-view="profile">歌词</button>
-          <button data-view="songid">唱片机</button>
-          <button data-view="chat">聊天</button>
+          <button data-view="playlist">&#x6B4C;&#x5355;</button>
+          <button class="active" data-view="profile">&#x6B4C;&#x8BCD;</button>
+          <button data-view="songid">&#x5531;&#x7247;&#x673A;</button>
+          <button data-view="chat">&#x804A;&#x5929;</button>
         </nav>
       </section>
 
@@ -68,14 +68,14 @@
             <span id="playlistMeta">loading</span>
           </div>
           <form class="playlist-search" id="playlistSearch">
-            <input id="playlistInput" autocomplete="off" placeholder="搜索歌曲、歌手、专辑">
+            <input id="playlistInput" autocomplete="off" placeholder="&#x641C;&#x7D22;&#x6B4C;&#x66F2;&#x3001;&#x6B4C;&#x624B;&#x3001;&#x4E13;&#x8F91;">
           </form>
         </div>
         <div class="playlist-list" id="playlistList"></div>
         <div class="playlist-pager">
-          <button id="playlistPrev" type="button">上一页</button>
+          <button id="playlistPrev" type="button">&#x4E0A;&#x4E00;&#x9875;</button>
           <span id="playlistPage">1 / 1</span>
-          <button id="playlistNext" type="button">下一页</button>
+          <button id="playlistNext" type="button">&#x4E0B;&#x4E00;&#x9875;</button>
         </div>
       </section>
 
@@ -87,7 +87,7 @@
           </div>
         </div>
         <div class="lyric-stage" aria-label="Lyrics">
-          <p id="currentLyric">暂无歌词</p>
+          <p id="currentLyric">&#x6682;&#x65E0;&#x6B4C;&#x8BCD;</p>
           <small id="nextLyric"></small>
           <div class="lyric-list" id="lyricList" aria-live="polite"></div>
         </div>
@@ -105,18 +105,18 @@
             <span>NetEase</span>
           </div>
           <form class="songid-search" id="songidSearch">
-            <input id="songidInput" autocomplete="off" placeholder="想听什么歌？也可以粘贴网易云歌曲ID">
-            <button type="submit">搜索</button>
+            <input id="songidInput" autocomplete="off" placeholder="&#x60F3;&#x542C;&#x4EC0;&#x4E48;&#x6B4C;&#xFF1F;&#x4E5F;&#x53EF;&#x4EE5;&#x7C98;&#x8D34;&#x7F51;&#x6613;&#x4E91;&#x6B4C;&#x66F2;ID">
+            <button type="submit">&#x641C;&#x7D22;</button>
           </form>
           <div class="source-cards">
             <button type="button" class="source-card local-library" id="localPlaylistBtn" data-source="local">
-              <strong>我的喜欢</strong>
+              <strong>&#x6211;&#x7684;&#x559C;&#x6B22;</strong>
             </button>
             <button type="button" class="source-card daily" id="dailySourceBtn" data-source="daily">
-              <strong>每日推荐</strong>
+              <strong>&#x6BCF;&#x65E5;&#x63A8;&#x8350;</strong>
             </button>
             <button type="button" class="source-card radar" id="fmSourceBtn" data-source="personal_fm">
-              <strong>私人雷达</strong>
+              <strong>&#x79C1;&#x4EBA;&#x96F7;&#x8FBE;</strong>
             </button>
             <button type="button" class="source-card import-playlist-source" id="importPlaylistBtn" data-source="import-playlist">
               <strong>+</strong>
@@ -125,20 +125,20 @@
           <div class="songid-stage hidden" id="songidStage">
             <div class="songid-toolbar">
               <div class="songid-topic">
-                <button type="button" id="songidBack" class="songid-back" aria-label="返回唱片机首页">‹</button>
-                <span id="songidMeta">选择一批网易云歌曲</span>
+                <button type="button" id="songidBack" class="songid-back" aria-label="&#x8FD4;&#x56DE;&#x5531;&#x7247;&#x673A;&#x9996;&#x9875;">&#x2039;</button>
+                <span id="songidMeta">&#x9009;&#x62E9;&#x4E00;&#x6279;&#x7F51;&#x6613;&#x4E91;&#x6B4C;&#x66F2;</span>
               </div>
               <div class="songid-actions">
-                <button type="button" id="songidPlayAll" disabled>播放全部</button>
-                <button type="button" id="songidActionMenuBtn" class="songid-action-menu-button" aria-label="选择播放方式" aria-expanded="false" disabled>▾</button>
+                <button type="button" id="songidPlayAll" disabled>&#x64AD;&#x653E;&#x5168;&#x90E8;</button>
+                <button type="button" id="songidActionMenuBtn" class="songid-action-menu-button" aria-label="&#x9009;&#x62E9;&#x64AD;&#x653E;&#x65B9;&#x5F0F;" aria-expanded="false" disabled>&#x25BE;</button>
                 <div id="songidActionMenu" class="songid-action-menu hidden" role="menu">
-                  <button type="button" data-action="append" role="menuitem">追加播放</button>
+                  <button type="button" data-action="append" role="menuitem">&#x8FFD;&#x52A0;&#x64AD;&#x653E;</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-        <div class="songid-results-heading hidden" id="songidResultsHeading">歌曲列表</div>
+        <div class="songid-results-heading hidden" id="songidResultsHeading">&#x6B4C;&#x66F2;&#x5217;&#x8868;</div>
         <div class="songid-results hidden" id="songidResults"></div>
       </section>
 
@@ -152,12 +152,12 @@
         </div>
         <div class="chat-log" id="chatLog"></div>
         <form class="chat-form" id="chatForm">
-          <input id="chatInput" autocomplete="off" placeholder="聊聊天，或说：我想听 Oh Wonder 的歌">
-          <button type="submit">发送</button>
+          <input id="chatInput" autocomplete="off" placeholder="&#x804A;&#x804A;&#x5929;&#xFF0C;&#x6216;&#x8BF4;&#xFF1A;&#x6211;&#x60F3;&#x542C; Oh Wonder &#x7684;&#x6B4C;">
+          <button type="submit">&#x53D1;&#x9001;</button>
         </form>
       </section>
 
     </main>
-    <script src="/app.js?v=201" type="module"></script>
+    <script src="/app.js?v=202" type="module"></script>
   </body>
 </html>

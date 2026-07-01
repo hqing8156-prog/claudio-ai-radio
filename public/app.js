@@ -317,20 +317,20 @@ function updateWeatherLabel(weather) {
     hour12: false
   }).format(new Date());
   const weatherMap = {
-    clear: "晴",
-    sunny: "晴",
-    clouds: "多云",
-    cloudy: "多云",
-    overcast: "阴",
-    rain: "雨",
-    snow: "雪",
-    mist: "雾",
-    fog: "雾",
-    haze: "霾"
+    clear: "\u6674",
+    sunny: "\u6674",
+    clouds: "\u591a\u4e91",
+    cloudy: "\u591a\u4e91",
+    overcast: "\u9634",
+    rain: "\u96e8",
+    snow: "\u96ea",
+    mist: "\u96fe",
+    fog: "\u96fe",
+    haze: "\u973e"
   };
-  const raw = String(weather.text || "").replace(/^当前位置\s*/, "").trim().toLowerCase();
-  const text = weatherMap[raw] || String(weather.text || "").replace(/^当前位置\s*/, "").trim() || "天气";
-  const temp = Number.isFinite(Number(weather.temp)) ? `${Math.round(Number(weather.temp))}°C` : "";
+  const raw = String(weather.text || "").replace(/^\u5f53\u524d\u4f4d\u7f6e\s*/, "").trim().toLowerCase();
+  const text = weatherMap[raw] || String(weather.text || "").replace(/^\u5f53\u524d\u4f4d\u7f6e\s*/, "").trim() || "\u5929\u6c14";
+  const temp = Number.isFinite(Number(weather.temp)) ? `${Math.round(Number(weather.temp))}\u00b0C` : "";
   els.weather.innerHTML = `<span class="panel-time">${escapeHtml(time)}</span><span>${escapeHtml(text)}${temp ? `&nbsp;&nbsp;${escapeHtml(temp)}` : ""}</span>`;
 }
 
@@ -528,7 +528,7 @@ function renderLyricList() {
         ${line.translation ? `<em>${escapeHtml(line.translation)}</em>` : ""}
       </div>
     `).join("")
-    : `<div class="lyric-row empty">暂无歌词</div>`;
+    : `<div class="lyric-row empty">\u6682\u65e0\u6b4c\u8bcd</div>`;
 }
 
 async function loadLyrics(track) {
@@ -537,12 +537,12 @@ async function loadLyrics(track) {
   lyricTrackKey = key;
   lyricLines = [];
   activeLyricIndex = -1;
-  els.currentLyric.textContent = "正在加载歌词";
+  els.currentLyric.textContent = "\u6b63\u5728\u52a0\u8f7d\u6b4c\u8bcd";
   els.nextLyric.textContent = "";
-  if (els.lyricList) els.lyricList.innerHTML = `<div class="lyric-row empty">正在加载歌词</div>`;
+  if (els.lyricList) els.lyricList.innerHTML = `<div class="lyric-row empty">\u6b63\u5728\u52a0\u8f7d\u6b4c\u8bcd</div>`;
   const songId = track.sourceId || track.id;
   if (!songId) {
-    els.currentLyric.textContent = "暂无歌词";
+    els.currentLyric.textContent = "\u6682\u65e0\u6b4c\u8bcd";
     renderLyricList();
     return;
   }
@@ -550,7 +550,7 @@ async function loadLyrics(track) {
   if (lyricTrackKey !== key) return;
   lyricLines = mergeTranslatedLyrics(parseLyrics(data.lyric), parseLyrics(data.tlyric));
   if (!lyricLines.length) {
-    els.currentLyric.textContent = "暂无歌词";
+    els.currentLyric.textContent = "\u6682\u65e0\u6b4c\u8bcd";
     renderLyricList();
     return;
   }
@@ -562,7 +562,7 @@ function updateLyric(seconds, { force = false, behavior = "smooth" } = {}) {
   if (!lyricLines.length) return;
   let index = lyricLines.findIndex((line, lineIndex) => seconds >= line.time && seconds < (lyricLines[lineIndex + 1]?.time ?? Infinity));
   if (index < 0) index = 0;
-  els.currentLyric.innerHTML = lyricLineHtml(lyricLines[index], "暂无歌词");
+  els.currentLyric.innerHTML = lyricLineHtml(lyricLines[index], "\u6682\u65e0\u6b4c\u8bcd");
   els.nextLyric.innerHTML = lyricLineHtml(lyricLines[index + 1], "");
   if (index === activeLyricIndex && !force) return;
   if (!els.lyricList) return;
@@ -612,11 +612,11 @@ async function refreshLikeState(track) {
     const data = await api(`/api/netease-like-check?id=${encodeURIComponent(songId)}`);
     if (likeCheckKey !== key) return;
     els.like.classList.toggle("liked", Boolean(data.liked));
-    els.like.textContent = data.liked ? "♥" : "♡";
+    els.like.textContent = data.liked ? "\u2665" : "\u2661";
   } catch {
     if (likeCheckKey !== key) return;
     els.like.classList.remove("liked");
-    els.like.textContent = "♡";
+    els.like.textContent = "\u2661";
   }
 }
 
@@ -674,7 +674,7 @@ function paint(payload, { announce = false } = {}) {
   els.title.classList.toggle("long-title", track.title.length > 42);
   els.title.classList.toggle("very-long-title", track.title.length > 72);
   els.artist.innerHTML = artistLinksHtml(track.artist, "artist-link", track.artistIds || []);
-  els.artist.title = track.artist ? `打开 ${track.artist} 的作品` : "";
+  els.artist.title = track.artist ? `\u6253\u5f00 ${track.artist} \u7684\u4f5c\u54c1` : "";
   els.artist.dataset.artist = track.artist || "";
   els.artist.dataset.artistId = track.artistId || track.artistIds?.[0] || "";
   if (els.album) {
@@ -683,7 +683,7 @@ function paint(payload, { announce = false } = {}) {
       ? albumLinkHtml(albumTitle, track.albumId, "album-link track-album-link", neteaseSongId(track))
       : "";
     els.album.classList.toggle("hidden", !albumTitle);
-    els.album.title = albumTitle ? `打开专辑 ${albumTitle}` : "";
+    els.album.title = albumTitle ? `\u6253\u5f00\u4e13\u8f91 ${albumTitle}` : "";
   }
   els.libraryCount.textContent = "";
   // AI DJ disabled for now. Restore these lines if the host copy is needed again:
@@ -702,19 +702,19 @@ function paint(payload, { announce = false } = {}) {
   }
   els.coverArt.alt = track.album ? `${track.album} cover` : `${track.title} cover`;
   scheduleAlbumReflection();
-  els.play.textContent = payload.playing ? "Ⅱ" : "▶";
+  els.play.textContent = payload.playing ? "\u2161" : "\u25b6";
   if (els.like) {
     const canLike = Boolean(neteaseSongId(track));
     els.like.disabled = !canLike;
     els.like.classList.toggle("liked", false);
-    els.like.textContent = "♡";
-    els.like.title = canLike ? `红心 ${track.title}` : "当前歌曲没有网易云 songId";
+    els.like.textContent = "\u2661";
+    els.like.title = canLike ? `\u7ea2\u5fc3 ${track.title}` : "\u5f53\u524d\u6b4c\u66f2\u6ca1\u6709\u7f51\u6613\u4e91 songId";
     if (canLike) refreshLikeState(track);
   }
   if (els.favoritePlaylist) {
     const canFavorite = Boolean(neteaseSongId(track));
     els.favoritePlaylist.disabled = !canFavorite;
-    els.favoritePlaylist.title = canFavorite ? `收藏 ${track.title} 到歌单` : "当前歌曲没有网易云 songId";
+    els.favoritePlaylist.title = canFavorite ? `\u6536\u85cf ${track.title} \u5230\u6b4c\u5355` : "\u5f53\u524d\u6b4c\u66f2\u6ca1\u6709\u7f51\u6613\u4e91 songId";
     if (!canFavorite) toggleFavoritePlaylistMenu(false);
   }
   {
@@ -722,16 +722,16 @@ function paint(payload, { announce = false } = {}) {
     const canShowMemory = Boolean(neteaseSongId(track));
     if (ui.button) {
       ui.button.disabled = !canShowMemory;
-      ui.button.title = canShowMemory ? `查看 ${track.title} 的回忆坐标` : "当前歌曲没有网易云 songId";
+      ui.button.title = canShowMemory ? `\u67e5\u770b ${track.title} \u7684\u56de\u5fc6\u5750\u6807` : "\u5f53\u524d\u6b4c\u66f2\u6ca1\u6709\u7f51\u6613\u4e91 songId";
     }
     const memoryCover = String(track.cover || "").replace(/^http:/, "https:");
     if (ui.bg) ui.bg.style.backgroundImage = memoryCover ? `url("${memoryCover}")` : "";
   }
   if (els.mode) {
-    const labels = { sequence: "顺序播放", "repeat-one": "单曲循环", shuffle: "随机播放" };
-    const icons = { sequence: "⇥", "repeat-one": "①", shuffle: "⤨" };
-    els.mode.textContent = icons[payload.playbackMode] || "⇥";
-    els.mode.title = `播放方式：${labels[payload.playbackMode] || "顺序播放"}`;
+    const labels = { sequence: "\u987a\u5e8f\u64ad\u653e", "repeat-one": "\u5355\u66f2\u5faa\u73af", shuffle: "\u968f\u673a\u64ad\u653e" };
+    const icons = { sequence: "\u21e5", "repeat-one": "\u2460", shuffle: "\u2928" };
+    els.mode.textContent = icons[payload.playbackMode] || "\u21e5";
+    els.mode.title = `\u64ad\u653e\u65b9\u5f0f\uff1a${labels[payload.playbackMode] || "\u987a\u5e8f\u64ad\u653e"}`;
   }
   els.shell.classList.toggle("playing", payload.playing);
   if (els.signal && (!els.signal.textContent || els.signal.textContent === "NCM LINK LIVE")) els.signal.textContent = payload.playing ? "ON AIR" : "READY";
@@ -761,13 +761,13 @@ function renderHistory(history) {
   els.history.innerHTML = history.length
     ? history.map((item, index) => `
       <article>
-        <button class="delete-history" data-id="${escapeHtml(item.id || `index-${index}`)}" title="Delete" aria-label="Delete ${escapeHtml(item.track.title)}">×</button>
+        <button class="delete-history" data-id="${escapeHtml(item.id || `index-${index}`)}" title="Delete" aria-label="Delete ${escapeHtml(item.track.title)}">\u00d7</button>
         <strong>${escapeHtml(item.track.title)}</strong>
         <em>${escapeHtml(item.track.artist || "")}</em>
         <small>${escapeHtml(item.line)}</small>
       </article>
     `).join("")
-    : `<article><strong>等待第一段串场</strong><small>点下一首，会生成一次上下文口播。</small></article>`;
+    : `<article><strong>\u7b49\u5f85\u7b2c\u4e00\u6bb5\u4e32\u573a</strong><small>\u70b9\u4e0b\u4e00\u9996\uff0c\u4f1a\u751f\u6210\u4e00\u6b21\u4e0a\u4e0b\u6587\u53e3\u64ad\u3002</small></article>`;
 }
 
 async function loadTaste() {
@@ -784,16 +784,16 @@ async function loadTaste() {
 
 function updateChatMemory(memory) {
   if (!els.chatMemory || !memory) return;
-  const prefs = memory.preferences?.length ? memory.preferences.join(" / ") : "还在学习你的口味";
-  els.chatMemory.textContent = `Taste memory · ${prefs}`;
+  const prefs = memory.preferences?.length ? memory.preferences.join(" / ") : "\u8fd8\u5728\u5b66\u4e60\u4f60\u7684\u53e3\u5473";
+  els.chatMemory.textContent = `Taste memory \u00b7 ${prefs}`;
 }
 
 function renderPlaylist(data) {
   if (!els.playlistList) return;
   if (data.sequence) {
     sequenceItems = data.items || [];
-    els.playlistMeta.textContent = `${data.queuedCount || 0} queued · ${data.playbackMode || "sequence"}`;
-    els.playlistPage.textContent = "播放序列";
+    els.playlistMeta.textContent = `${data.queuedCount || 0} queued \u00b7 ${data.playbackMode || "sequence"}`;
+    els.playlistPage.textContent = "\u64ad\u653e\u5e8f\u5217";
     els.playlistPrev.disabled = true;
     els.playlistNext.disabled = true;
     els.playlistList.innerHTML = sequenceItems.length
@@ -809,19 +809,19 @@ function renderPlaylist(data) {
           data-artist="${escapeHtml(track.artist || "")}"
           data-album="${escapeHtml(track.album || "")}"
           data-duration="${escapeHtml(track.duration || "")}"
-          title="播放 ${escapeHtml(track.title)}">
+          title="\u64ad\u653e ${escapeHtml(track.title)}">
           <span class="row-left">
             <span class="row-index">${displayIndex}</span>
             <span class="row-main">
               <strong>${escapeHtml(track.title)}</strong>
-              <small>${escapeHtml(track.artist)}${track.album ? ` · ${escapeHtml(track.album)}` : ""}${track.label ? ` · ${escapeHtml(track.label)}` : ""}</small>
+              <small>${escapeHtml(track.artist)}${track.album ? ` \u00b7 ${escapeHtml(track.album)}` : ""}${track.label ? ` \u00b7 ${escapeHtml(track.label)}` : ""}</small>
             </span>
           </span>
           <span class="row-duration">${format(track.duration || 0)}</span>
         </button>
       `;
       }).join("")
-      : `<article class="empty-list">暂无播放序列。</article>`;
+      : `<article class="empty-list">\u6682\u65e0\u64ad\u653e\u5e8f\u5217\u3002</article>`;
     return;
   }
   sequenceItems = [];
@@ -847,18 +847,18 @@ function renderPlaylist(data) {
         data-album="${escapeHtml(track.album || "")}"
         data-cover="${escapeHtml(track.cover || "")}"
         data-duration="${escapeHtml(track.duration || "")}"
-        title="播放 ${escapeHtml(track.title)}">
+        title="\u64ad\u653e ${escapeHtml(track.title)}">
         <span class="row-left">
           <span class="row-index">${track.index + 1}</span>
           <span class="row-main">
             <strong>${escapeHtml(track.title)}</strong>
-            <small>${escapeHtml(track.artist)}${track.album ? ` · ${escapeHtml(track.album)}` : ""}</small>
+            <small>${escapeHtml(track.artist)}${track.album ? ` \u00b7 ${escapeHtml(track.album)}` : ""}</small>
           </span>
         </span>
         <span class="row-duration">${format(track.duration || 0)}</span>
       </button>
     `).join("")
-    : `<article class="empty-list">没有找到匹配的歌曲。</article>`;
+    : `<article class="empty-list">\u6ca1\u6709\u627e\u5230\u5339\u914d\u7684\u6b4c\u66f2\u3002</article>`;
 }
 
 async function loadPlaylist(query = playlistState.query, offset = playlistState.offset) {
@@ -874,7 +874,7 @@ async function loadPlaylist(query = playlistState.query, offset = playlistState.
 
 async function loadSequence() {
   openPanel("playlist");
-  els.playlistList.innerHTML = `<article class="empty-list">正在读取播放序列...</article>`;
+  els.playlistList.innerHTML = `<article class="empty-list">\u6b63\u5728\u8bfb\u53d6\u64ad\u653e\u5e8f\u5217...</article>`;
   renderPlaylist({ ...(await api("/api/sequence")), sequence: true });
 }
 
@@ -1020,10 +1020,10 @@ function stationMessageHtml(text, recommendations = []) {
         data-album-id="${escapeHtml(item.albumId || "")}"
         data-cover="${escapeHtml(item.cover || "")}"
         data-duration="${escapeHtml(item.duration || "")}"
-        title="播放 ${escapeHtml(item.title)}">
+        title="\u64ad\u653e ${escapeHtml(item.title)}">
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <small>${item.external ? "网易云 · " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` · ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
+          <small>${item.external ? "\u7f51\u6613\u4e91 \u00b7 " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` \u00b7 ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
         </span>
         <span class="play-chip" aria-hidden="true"></span>
       </button>
@@ -1046,15 +1046,15 @@ function recommendationCards(recommendations = []) {
         data-album-id="${escapeHtml(item.albumId || "")}"
         data-cover="${escapeHtml(item.cover || "")}"
         data-duration="${escapeHtml(item.duration || "")}"
-        title="播放 ${escapeHtml(item.title)}">
+        title="\u64ad\u653e ${escapeHtml(item.title)}">
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <small>${item.external ? "网易云 · " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` · ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
+          <small>${item.external ? "\u7f51\u6613\u4e91 \u00b7 " : ""}${artistLinksHtml(item.artist || "", "artist-link inline", item.artistIds || [])}${item.album ? ` \u00b7 ${albumLinkHtml(item.album, item.albumId, "album-link inline", item.sourceId)}` : ""}</small>
         </span>
         <span class="play-chip" aria-hidden="true"></span>
       </button>
     `).join("")
-    : `<article class="empty-list">没有结果</article>`;
+    : `<article class="empty-list">\u6ca1\u6709\u7ed3\u679c</article>`;
 }
 
 function songTags(tags = []) {
@@ -1065,10 +1065,10 @@ function songTags(tags = []) {
 
 function songTagClass(tag) {
   const text = String(tag || "");
-  if (/vip|付费|试听|版权/i.test(text)) return "tag-red";
-  if (/超清|母带|无损|hi-?res|sq|hr/i.test(text)) return "tag-gold";
-  if (/红心|喜欢|收藏/.test(text)) return "tag-heart";
-  if (/播放|听你爱的|推荐|昨日|关注/.test(text)) return "tag-red";
+  if (/vip|\u4ed8\u8d39|\u8bd5\u542c|\u7248\u6743/i.test(text)) return "tag-red";
+  if (/\u8d85\u6e05|\u6bcd\u5e26|\u65e0\u635f|hi-?res|sq|hr/i.test(text)) return "tag-gold";
+  if (/\u7ea2\u5fc3|\u559c\u6b22|\u6536\u85cf/.test(text)) return "tag-heart";
+  if (/\u64ad\u653e|\u542c\u4f60\u7231\u7684|\u63a8\u8350|\u6628\u65e5|\u5173\u6ce8/.test(text)) return "tag-red";
   return "tag-green";
 }
 
@@ -1084,8 +1084,8 @@ function setSongidBatch(items = [], name = "NetEase Queue", cover = "") {
   if (els.songidActionMenuBtn) els.songidActionMenuBtn.disabled = currentSongidBatch.length === 0;
   if (els.songidMeta) {
     els.songidMeta.innerHTML = currentSongidBatch.length
-      ? `<strong>${escapeHtml(name)}</strong><small>${currentSongidBatch.length} 首</small>`
-      : `<strong>没有可播放结果</strong><small>返回后重新选择来源</small>`;
+      ? `<strong>${escapeHtml(name)}</strong><small>${currentSongidBatch.length} \u9996</small>`
+      : `<strong>\u6ca1\u6709\u53ef\u64ad\u653e\u7ed3\u679c</strong><small>\u8fd4\u56de\u540e\u91cd\u65b0\u9009\u62e9\u6765\u6e90</small>`;
   }
   if (els.songidResults) els.songidResults.innerHTML = songidCards(currentSongidBatch);
 }
@@ -1197,9 +1197,9 @@ async function addCurrentSongToPlaylist(playlistId, button) {
       body: JSON.stringify({ id: songId, playlistId })
     });
     toggleFavoritePlaylistMenu(false);
-    showTransientStatus("已收藏到歌单");
+    showTransientStatus("\u5df2\u6536\u85cf\u5230\u6b4c\u5355");
   } catch {
-    showTransientStatus("收藏失败");
+    showTransientStatus("\u6536\u85cf\u5931\u8d25");
   } finally {
     if (button) button.classList.remove("loading");
   }
@@ -1223,7 +1223,7 @@ function openSongidResults(message) {
   if (els.songidPlayAll) els.songidPlayAll.disabled = true;
   if (els.songidActionMenuBtn) els.songidActionMenuBtn.disabled = true;
   toggleSongidActionMenu(false);
-  if (els.songidMeta) els.songidMeta.innerHTML = `<strong>正在打开</strong><small>读取歌曲列表中</small>`;
+  if (els.songidMeta) els.songidMeta.innerHTML = `<strong>\u6b63\u5728\u6253\u5f00</strong><small>\u8bfb\u53d6\u6b4c\u66f2\u5217\u8868\u4e2d</small>`;
   if (message && els.songidResults && !currentSongidBatch.length) {
     els.songidResults.innerHTML = `<article class="empty-list">${message}</article>`;
   }
@@ -1246,7 +1246,7 @@ function openPanel(id) {
 
 function artistCandidates(value) {
   return String(value || "")
-    .split(/\s*(?:\/|,|;|、|，|和|feat\.?|ft\.?|with)\s*/i)
+    .split(/\s*(?:\/|,|;|\u3001|\uff0c|\u548c|feat\.?|ft\.?|with)\s*/i)
     .map((item) => item.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 }
@@ -1285,7 +1285,7 @@ async function loadArtistWorks(artist, artistId = "") {
   if (!name && !id) return;
   openPanel("songid");
   setSongidSource("artist");
-  openSongidResults(`正在从网易云搜索 ${escapeHtml(name)} 的作品...`);
+  openSongidResults(`\u6b63\u5728\u4ece\u7f51\u6613\u4e91\u641c\u7d22 ${escapeHtml(name)} \u7684\u4f5c\u54c1...`);
   let data;
   try {
     try {
@@ -1297,11 +1297,11 @@ async function loadArtistWorks(artist, artistId = "") {
       data = await api(`/api/netease-search?q=${encodeURIComponent(name)}&limit=50`);
     }
     const recommendations = data.recommendations || [];
-    setSongidBatch(recommendations, `${name} 的作品`, data.source?.cover || "");
+    setSongidBatch(recommendations, `${name} \u7684\u4f5c\u54c1`, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
-    setSongidBatch([], `${name} 的作品`);
-    els.songidResults.innerHTML = `<article class="empty-list">打开失败：${escapeHtml(error.message || "网易云搜索失败")}</article>`;
+    setSongidBatch([], `${name} \u7684\u4f5c\u54c1`);
+    els.songidResults.innerHTML = `<article class="empty-list">\u6253\u5f00\u5931\u8d25\uff1a${escapeHtml(error.message || "\u7f51\u6613\u4e91\u641c\u7d22\u5931\u8d25")}</article>`;
   }
 }
 
@@ -1312,7 +1312,7 @@ async function loadAlbumSongs(albumId, albumName = "", songId = "") {
   if (!id && !sourceId) return;
   openPanel("songid");
   setSongidSource(`album-${id || sourceId}`);
-  openSongidResults(`正在打开《${escapeHtml(name)}》...`);
+  openSongidResults(`\u6b63\u5728\u6253\u5f00\u300a${escapeHtml(name)}\u300b...`);
   let data;
   try {
     const endpoint = id
@@ -1325,7 +1325,7 @@ async function loadAlbumSongs(albumId, albumName = "", songId = "") {
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], name);
-    els.songidResults.innerHTML = `<article class="empty-list">打开专辑失败：${escapeHtml(error.message || "请确认网易云 API 可用")}</article>`;
+    els.songidResults.innerHTML = `<article class="empty-list">\u6253\u5f00\u4e13\u8f91\u5931\u8d25\uff1a${escapeHtml(error.message || "\u8bf7\u786e\u8ba4\u7f51\u6613\u4e91 API \u53ef\u7528")}</article>`;
   }
 }
 
@@ -1361,8 +1361,8 @@ function trackFromDataset(element) {
   if (!element?.dataset?.sourceId) return null;
   return {
     sourceId: element.dataset.sourceId,
-    title: element.dataset.title || "网易云歌曲",
-    artist: element.dataset.artist || "未知歌手",
+    title: element.dataset.title || "\u7f51\u6613\u4e91\u6b4c\u66f2",
+    artist: element.dataset.artist || "\u672a\u77e5\u6b4c\u624b",
     album: element.dataset.album || "NetEase",
     cover: element.dataset.cover || "",
     duration: Number(element.dataset.duration || 0)
@@ -1391,7 +1391,7 @@ async function refreshSongidResultLikes() {
       const button = card.querySelector(".songid-like");
       const isLiked = Boolean(liked[card.dataset.sourceId]);
       button?.classList.toggle("liked", isLiked);
-      if (button) button.textContent = isLiked ? "♥" : "♡";
+      if (button) button.textContent = isLiked ? "\u2665" : "\u2661";
     }
   } catch {
     // The play list should remain usable even if the like status endpoint is unavailable.
@@ -1404,7 +1404,7 @@ function songidCards(recommendations = []) {
       const cover = String(item.cover || item.albumCover || item.picUrl || currentSongidBatchCover || "").replace(/^http:/, "https:");
       const fallbackLabel = escapeHtml((item.album || item.title || "?").slice(0, 1).toUpperCase());
       const tags = Number.isFinite(Number(item.firstLyricAt))
-        ? [`约${Math.round(Number(item.firstLyricAt))}秒开唱`, ...(item.tags || [])]
+        ? [`\u7ea6${Math.round(Number(item.firstLyricAt))}\u79d2\u5f00\u5531`, ...(item.tags || [])]
         : (item.tags || []);
       return `
       <article class="songid-card"
@@ -1422,15 +1422,15 @@ function songidCards(recommendations = []) {
         ${cover ? `<img src="${escapeHtml(cover)}" alt="">` : `<div class="songid-cover-fallback">${fallbackLabel}</div>`}
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <small>${songTags(tags)}<span class="song-meta">${artistLinksHtml(item.artist || "")}${item.album ? ` · ${escapeHtml(item.album)}` : ""}</span></small>
+          <small>${songTags(tags)}<span class="song-meta">${artistLinksHtml(item.artist || "")}${item.album ? ` \u00b7 ${escapeHtml(item.album)}` : ""}</span></small>
         </span>
-        <button class="songid-play" type="button" title="播放" aria-label="播放 ${escapeHtml(item.title)}"></button>
-        <button class="songid-queue" type="button" title="下一首播放" aria-label="下一首播放 ${escapeHtml(item.title)}"></button>
-        <button class="songid-like" type="button" title="红心到网易云账号" aria-label="喜欢 ${escapeHtml(item.title)}">♡</button>
+        <button class="songid-play" type="button" title="\u64ad\u653e" aria-label="\u64ad\u653e ${escapeHtml(item.title)}"></button>
+        <button class="songid-queue" type="button" title="\u4e0b\u4e00\u9996\u64ad\u653e" aria-label="\u4e0b\u4e00\u9996\u64ad\u653e ${escapeHtml(item.title)}"></button>
+        <button class="songid-like" type="button" title="\u7ea2\u5fc3\u5230\u7f51\u6613\u4e91\u8d26\u53f7" aria-label="\u559c\u6b22 ${escapeHtml(item.title)}">\u2661</button>
       </article>
     `;
     }).join("")}</div>`
-    : `<div class="songid-results-body"><article class="empty-list">没有结果</article></div>`;
+    : `<div class="songid-results-body"><article class="empty-list">\u6ca1\u6709\u7ed3\u679c</article></div>`;
 }
 
 function addStationMessage(text, recommendations = []) {
@@ -1444,7 +1444,7 @@ function addStationMessage(text, recommendations = []) {
 function addPendingStationMessage() {
   const p = document.createElement("p");
   p.className = "pending";
-  p.innerHTML = `<small>Station</small><br>正在想...`;
+  p.innerHTML = `<small>Station</small><br>\u6b63\u5728\u60f3...`;
   els.chatLog.appendChild(p);
   els.chatLog.scrollTop = els.chatLog.scrollHeight;
   return p;
@@ -1466,7 +1466,7 @@ async function sendLocation() {
       body: JSON.stringify({
         lat: position.coords.latitude,
         lon: position.coords.longitude,
-        label: "当前位置"
+        label: "\u5f53\u524d\u4f4d\u7f6e"
       })
     });
     paint(payload);
@@ -1532,12 +1532,12 @@ els.like?.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({ id: songId, like: shouldLike })
     });
-    els.like.textContent = shouldLike ? "♥" : "♡";
+    els.like.textContent = shouldLike ? "\u2665" : "\u2661";
     els.like.classList.toggle("liked", shouldLike);
-    showTransientStatus(shouldLike ? "已红心" : "已取消红心");
+    showTransientStatus(shouldLike ? "\u5df2\u7ea2\u5fc3" : "\u5df2\u53d6\u6d88\u7ea2\u5fc3");
   } catch (error) {
-    els.like.textContent = els.like.classList.contains("liked") ? "♥" : "♡";
-    showTransientStatus("红心失败");
+    els.like.textContent = els.like.classList.contains("liked") ? "\u2665" : "\u2661";
+    showTransientStatus("\u7ea2\u5fc3\u5931\u8d25");
   } finally {
     els.like.disabled = false;
   }
@@ -1636,30 +1636,30 @@ els.songidSearch?.addEventListener("submit", async (event) => {
   const query = els.songidInput.value.trim();
   if (!query) return;
   setSongidSource("search");
-  openSongidResults("正在从网易云搜索...");
+  openSongidResults("\u6b63\u5728\u4ece\u7f51\u6613\u4e91\u641c\u7d22...");
   try {
     const data = await api(`/api/netease-search?q=${encodeURIComponent(query)}&limit=50`);
-    setSongidBatch(data.recommendations || [], `搜索：${query}`, data.source?.cover || "");
+    setSongidBatch(data.recommendations || [], `\u641c\u7d22\uff1a${query}`, data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
-    setSongidBatch([], `搜索：${query}`);
-    els.songidResults.innerHTML = `<article class="empty-list">搜索失败：${escapeHtml(error.message || "网易云搜索失败")}</article>`;
+    setSongidBatch([], `\u641c\u7d22\uff1a${query}`);
+    els.songidResults.innerHTML = `<article class="empty-list">\u641c\u7d22\u5931\u8d25\uff1a${escapeHtml(error.message || "\u7f51\u6613\u4e91\u641c\u7d22\u5931\u8d25")}</article>`;
   }
 });
 
 async function loadNeteaseSource(source) {
   setSongidSource(source);
-  const label = source === "personal_fm" ? "私人雷达" : "每日推荐";
-  openSongidResults(`正在打开${label}...`);
+  const label = source === "personal_fm" ? "\u79c1\u4eba\u96f7\u8fbe" : "\u6bcf\u65e5\u63a8\u8350";
+  openSongidResults(`\u6b63\u5728\u6253\u5f00${label}...`);
   let data;
   try {
     data = await api(`/api/netease-dynamic?source=${encodeURIComponent(source)}`);
     updateSourceCardCaption(source, data);
-    setSongidBatch(data.recommendations || [], data.source?.name || (source === "personal_fm" ? "私人雷达" : "每日推荐"), data.source?.cover || "");
+    setSongidBatch(data.recommendations || [], data.source?.name || (source === "personal_fm" ? "\u79c1\u4eba\u96f7\u8fbe" : "\u6bcf\u65e5\u63a8\u8350"), data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], "NetEase Queue");
-    els.songidResults.innerHTML = `<article class="empty-list">打开失败：${escapeHtml(error.message || "请确认网易云 API 已登录")}</article>`;
+    els.songidResults.innerHTML = `<article class="empty-list">\u6253\u5f00\u5931\u8d25\uff1a${escapeHtml(error.message || "\u8bf7\u786e\u8ba4\u7f51\u6613\u4e91 API \u5df2\u767b\u5f55")}</article>`;
   }
 }
 
@@ -1668,16 +1668,16 @@ els.fmSource?.addEventListener("click", () => loadNeteaseSource("personal_fm"));
 
 async function loadLocalSongidPlaylist() {
   setSongidSource("local");
-  openSongidResults("正在打开我的喜欢...");
+  openSongidResults("\u6b63\u5728\u6253\u5f00\u6211\u7684\u559c\u6b22...");
   let data;
   try {
     data = await api("/api/local-playlist");
     updateSourceCardCaption("local", data);
-    setSongidBatch(data.recommendations || [], data.source?.name || "我的喜欢", data.source?.cover || "");
+    setSongidBatch(data.recommendations || [], data.source?.name || "\u6211\u7684\u559c\u6b22", data.source?.cover || "");
     refreshSongidResultLikes();
   } catch (error) {
-    setSongidBatch([], "我的喜欢");
-    els.songidResults.innerHTML = `<article class="empty-list">打开失败：${escapeHtml(error.message || "我的喜欢读取失败")}</article>`;
+    setSongidBatch([], "\u6211\u7684\u559c\u6b22");
+    els.songidResults.innerHTML = `<article class="empty-list">\u6253\u5f00\u5931\u8d25\uff1a${escapeHtml(error.message || "\u6211\u7684\u559c\u6b22\u8bfb\u53d6\u5931\u8d25")}</article>`;
   }
 }
 
@@ -1697,7 +1697,7 @@ async function loadFixedNeteasePlaylist(id = "") {
   setSongidSource(`playlist-${id}`);
   const sourceButton = document.querySelector(`.source-card[data-source="${CSS.escape(`playlist-${id}`)}"] strong`);
   const loadingName = sourceButton?.textContent?.trim() || `Playlist ${id}`;
-  openSongidResults(`正在打开 ${escapeHtml(loadingName)}...`);
+  openSongidResults(`\u6b63\u5728\u6253\u5f00 ${escapeHtml(loadingName)}...`);
   let data;
   try {
     data = await api(`/api/netease-playlist?id=${encodeURIComponent(id)}`);
@@ -1706,7 +1706,7 @@ async function loadFixedNeteasePlaylist(id = "") {
     refreshSongidResultLikes();
   } catch (error) {
     setSongidBatch([], `Playlist ${id}`);
-    els.songidResults.innerHTML = `<article class="empty-list">打开失败：${escapeHtml(error.message || "请确认网易云 API 已登录")}</article>`;
+    els.songidResults.innerHTML = `<article class="empty-list">\u6253\u5f00\u5931\u8d25\uff1a${escapeHtml(error.message || "\u8bf7\u786e\u8ba4\u7f51\u6613\u4e91 API \u5df2\u767b\u5f55")}</article>`;
   }
 }
 
@@ -1740,7 +1740,7 @@ async function appendCurrentSongidBatch() {
     })
   });
   paint(payload);
-  showTransientStatus("已追加到后续播放");
+  showTransientStatus("\u5df2\u8ffd\u52a0\u5230\u540e\u7eed\u64ad\u653e");
   loadSequence();
   toggleSongidActionMenu(false);
 }
@@ -1783,7 +1783,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     updateChatMemory(memory);
     updateStationMessage(pending, reply, recommendations);
   } catch (error) {
-    updateStationMessage(pending, `这条回复失败了：${error.message || "网络或服务异常"}`);
+    updateStationMessage(pending, `\u8fd9\u6761\u56de\u590d\u5931\u8d25\u4e86\uff1a${error.message || "\u7f51\u7edc\u6216\u670d\u52a1\u5f02\u5e38"}`);
   }
 });
 
@@ -1845,10 +1845,10 @@ els.songidResults?.addEventListener("click", async (event) => {
         method: "POST",
         body: JSON.stringify({ id: card.dataset.sourceId, like: shouldLike })
       });
-      button.textContent = shouldLike ? "♥" : "♡";
+      button.textContent = shouldLike ? "\u2665" : "\u2661";
       button.classList.toggle("liked", shouldLike);
     } catch {
-      button.textContent = button.classList.contains("liked") ? "♥" : "♡";
+      button.textContent = button.classList.contains("liked") ? "\u2665" : "\u2661";
       showTransientStatus("LIKE FAILED");
     }
     return;
@@ -1866,7 +1866,7 @@ els.songidResults?.addEventListener("click", async (event) => {
       });
       button.classList.remove("loading");
       button.classList.add("queued");
-      button.textContent = "✓";
+      button.textContent = "\u2713";
       showTransientStatus("NEXT UP");
       paint(payload);
       window.setTimeout(() => {
