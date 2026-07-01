@@ -68,8 +68,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-portable-release.ps1
 This creates:
 
 ```text
-release/Claudio-AI-Radio-2.0.0-portable/
-release/Claudio-AI-Radio-2.0.0-portable.zip
+release/Claudio-AI-Radio-0.2.0-portable/
+release/Claudio-AI-Radio-0.2.0-portable.zip
 ```
 
 The portable package includes:

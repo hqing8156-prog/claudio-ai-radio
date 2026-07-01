@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$Version = "2.0.0"
+$Version = "0.2.0"
 $ReleaseName = "Claudio-AI-Radio-$Version-portable"
 $ReleaseDir = Join-Path $ProjectDir "release\$ReleaseName"
 $ReleaseZip = Join-Path $ProjectDir "release\$ReleaseName.zip"
